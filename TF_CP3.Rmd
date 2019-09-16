@@ -94,12 +94,14 @@ with(new_in_out, boxplot(prop_out ~ pH * Cue))
 ```
 
 LOOK AT IT HERE. I AM TRYING TO 'PREDICT' VALUES FOR Y GIVEN MY X VALUES AND THE GLMER WE CREATED. WHEN I DID SO, THEY ARE SPANNING FROM -##S TO VERY LARGE WHEN I THOUGHT THEY WERE SUPPOSED TO BE BOUNDED FROM 0 TO 1? HELP PLEASE.
+###9/16/19 Remember that the logistic regression is spitting out values in logit space, which goes from negative infinity to infinty. To get proportion you need to backtransform it first using plogis() -- GN
 prediction lines for models
 ```{r}
 new_in_out.x = expand.grid(pH = seq(from = 1, to = 15, by = 0.5), Cue = c('pisaster', 'no cue', 'crab'), Out = 0, In = 0)
 View(new_in_out.x)
 mm = model.matrix(terms(glmer_in_out), new_in_out.x)
 new_in_out.x$Out = mm%*%fixef(glmer_in_out)
+####Because this is a logistic regression, I would use plogis(mm%*%fixef(glmer_in_out)) to get proportion
 ```
 THIS IS THE OLD CODE YOU GAVE ME TO LOOK AT
 -we are going to create a dataframe that has the 'filler points' with a predicted y value to give our s-shape curve higher resolution...more importantly, we are going to put the pH values in order...
