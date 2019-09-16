@@ -100,7 +100,8 @@ prediction lines for models
 new_in_out.x = expand.grid(pH = seq(from = 1, to = 15, by = 0.5), Cue = c('pisaster', 'no cue', 'crab'), Out = 0, In = 0)
 View(new_in_out.x)
 mm = model.matrix(terms(glmer_in_out), new_in_out.x)
-new_in_out.x$Out = mm%*%fixef(glmer_in_out)
+new_in_out.x$Out = plogis(mm%*%fixef(glmer_in_out))
+View(new_in_out.x)
 ####Because this is a logistic regression, I would use plogis(mm%*%fixef(glmer_in_out)) to get proportion
 ```
 THIS IS THE OLD CODE YOU GAVE ME TO LOOK AT
