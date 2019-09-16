@@ -1,0 +1,288 @@
+---
+title: "TF_CP3"
+output: html_document
+---
+set-ups: loads all files needed 'library section'
+```{r}
+library(lme4) #lme model
+library(emmeans) #tukey posthoc...well it is supposed to be
+library(dplyr) #create new dataframe
+library(tidyr) #create new dataframe
+library(jtools)
+library("readxl")
+```
+
+loading data
+```{r}
+setwd('/Users/alishamsaley/Documents/Pred_Prey OA Pilots/TF_CP3/')
+tfave <- read_xlsx('pH averages.xlsx')
+View(tfave)
+
+in_out = read_xlsx('practice.xlsx')
+View(in_out)
+in_out$treatment[in_out$treatment == "carb"] = "crab" #cleaning up df
+with(in_out, unique(treatment))
+```
+
+calculating ave pH by tank
+```{r}
+ave = aggregate(tfave$`corrected pH`, by = list(tfave$Tank), FUN = mean)
+names(ave) = c("tank", "corr_pH")
+View(ave)
+```
+
+creating new dataframe with summaries of in/out for glmer...kristen's help...
+```{r}
+#rename c and nc to numbers for new dataframe...because we are using mean function
+in_out$treatment[in_out$treatment == "no cue"] = 0
+in_out$treatment[in_out$treatment == "pisaster"] = 1
+in_out$treatment[in_out$treatment == "crab"] = 2
+in_out$treatment[in_out$treatment == "conspecific"] = 3
+in_out$treatment = as.numeric(in_out$treatment)
+unique(in_out$treatment) #tells me all of the values
+
+in_out$Trial[in_out$Trial == "1_gA"] = 1
+in_out$Trial[in_out$Trial == "2_gB"] = 2
+in_out$Trial[in_out$Trial == "3_gC"] = 3
+in_out$Trial[in_out$Trial == "4_gD"] = 4
+in_out$Trial[in_out$Trial == "5_gE"] = 5
+in_out$Trial[in_out$Trial == "6_gF"] = 6
+in_out$Trial[in_out$Trial == "7_gG"] = 7
+in_out$Trial[in_out$Trial == "8_gH"] = 8
+in_out$Trial[in_out$Trial == "9_gI"] = 9
+in_out$Trial[in_out$Trial == "10_gJ"] = 10
+in_out$ind = as.factor(in_out$ind)
+new_in_out = in_out %>% group_by(ind) %>% dplyr::summarise(trial = mean(as.numeric(Trial)), bin = mean(Bin), pH = mean(pH_corrected), Cue = mean(treatment), prop_in = sum(in_out)/n(), In = sum(in_out), Total = length(ind), Out = Total - In, prop_out = 1- prop_in)
+View(new_in_out)
+#dplyr:: tells the function from which package to draw from
+#name = formula(name) is a way to create a new column in the dataframe using a 
+#function applied to the old dataframe
+
+new_in_out$Cue[new_in_out$Cue == "0"] = "no cue"
+new_in_out$Cue[new_in_out$Cue == "1"] = "pisaster"
+new_in_out$Cue[new_in_out$Cue == "2"] = "crab"
+new_in_out$Cue[new_in_out$Cue == "3"] = "conspecific"
+#replace numbers with lettered codes in new dataframe
+```
+
+df, glmer, plot with only ambient values for slopes
+```{r}
+amb = new_in_out
+amb = data.frame(amb)
+amb = amb[amb$pH >= 12.5 & amb$Cue != "conspecific",]
+glmer_amb = glmer(cbind(Out, In) ~ Cue + (1|trial) + (1|ind), data = amb, family = binomial)
+summary(glmer_amb)
+amb2 = emmeans(glmer_amb, ~ Cue)
+summary(amb2)
+contrast(amb2, method = 'tukey')
+
+#plot
+with(amb, boxplot(prop_out ~ Cue))
+```
+
+glmer for slopes
+```{r}
+new_in_out = new_in_out[new_in_out$Cue != "conspecific",]
+glmer_in_out = glmer(cbind(Out, In) ~ pH * Cue + (1|trial) + (1|ind) , data = new_in_out, family = binomial)
+summary(glmer_in_out)
+
+g2 = emtrends(glmer_in_out, ~ Cue, var = "pH")
+summary(g2)
+contrast(g2, method = 'tukey')
+#slope between crab and pisaster are sig diff (p = .02) but slope between crab-no cue and pis-no cue are not sig diff
+with(new_in_out, boxplot(prop_out ~ pH * Cue))
+```
+
+LOOK AT IT HERE. I AM TRYING TO 'PREDICT' VALUES FOR Y GIVEN MY X VALUES AND THE GLMER WE CREATED. WHEN I DID SO, THEY ARE SPANNING FROM -##S TO VERY LARGE WHEN I THOUGHT THEY WERE SUPPOSED TO BE BOUNDED FROM 0 TO 1? HELP PLEASE.
+prediction lines for models
+```{r}
+new_in_out.x = expand.grid(pH = seq(from = 1, to = 15, by = 0.5), Cue = c('pisaster', 'no cue', 'crab'), Out = 0, In = 0)
+View(new_in_out.x)
+mm = model.matrix(terms(glmer_in_out), new_in_out.x)
+new_in_out.x$Out = mm%*%fixef(glmer_in_out)
+```
+THIS IS THE OLD CODE YOU GAVE ME TO LOOK AT
+-we are going to create a dataframe that has the 'filler points' with a predicted y value to give our s-shape curve higher resolution...more importantly, we are going to put the pH values in order...
+new.x = expand.grid(pH = seq(from = 6.6, to = 8.1, by = 0.1), Cue = c("c", "nc"), Out = 0, In = 0)
+View(new.x)
+mm = model.matrix(terms(gabe), new.x)
+new.x$Out = mm%*%fixef(gabe)
+
+
+
+
+
+THIS IS FOR THE IN_OUT2 COLUMN not helpful
+creating new dataframe with summaries of in/out for glmer...kristen's help...
+```{r}
+#rename c and nc to numbers for new dataframe...because we are using mean function
+in_out$treatment[in_out$treatment == "no cue"] = 0
+in_out$treatment[in_out$treatment == "pisaster"] = 1
+in_out$treatment[in_out$treatment == "crab"] = 2
+in_out$treatment[in_out$treatment == "conspecific"] = 3
+in_out$treatment = as.numeric(in_out$treatment)
+unique(in_out$treatment) #tells me all of the values
+
+in_out$Trial[in_out$Trial == "1_gA"] = 1
+in_out$Trial[in_out$Trial == "2_gB"] = 2
+in_out$Trial[in_out$Trial == "3_gC"] = 3
+in_out$Trial[in_out$Trial == "4_gD"] = 4
+in_out$Trial[in_out$Trial == "5_gE"] = 5
+in_out$Trial[in_out$Trial == "6_gF"] = 6
+in_out$Trial[in_out$Trial == "7_gG"] = 7
+in_out$Trial[in_out$Trial == "8_gH"] = 8
+in_out$Trial[in_out$Trial == "9_gI"] = 9
+in_out$Trial[in_out$Trial == "10_gJ"] = 10
+in_out$ind = as.factor(in_out$ind)
+new_in_out2 = in_out %>% group_by(ind) %>% dplyr::summarise(trial = mean(as.numeric(Trial)), bin = mean(Bin), pH = mean(pH_corrected), Cue = mean(treatment), prop_in = sum(in_out2)/n(), In = sum(in_out2), Total = length(ind), Out = Total - In, prop_out = 1- prop_in)
+View(new_in_out2)
+#dplyr:: tells the function from which package to draw from
+#name = formula(name) is a way to create a new column in the dataframe using a 
+#function applied to the old dataframe
+
+new_in_out2$Cue[new_in_out2$Cue == "0"] = "no cue"
+new_in_out2$Cue[new_in_out2$Cue == "1"] = "pisaster"
+new_in_out2$Cue[new_in_out2$Cue == "2"] = "crab"
+new_in_out2$Cue[new_in_out2$Cue == "3"] = "conspecific"
+#replace numbers with lettered codes in new dataframe
+```
+
+df, glmer, plot with only ambient values COLUMN2 for slopes
+```{r}
+Amb = new_in_out2
+Amb = data.frame(Amb)
+Amb = Amb[Amb$pH >= 12.5 & Amb$Cue != "conspecific",]
+glmer_Amb = glmer(cbind(Out, In) ~ Cue + (1|trial) + (1|ind), data = Amb, family = binomial)
+summary(glmer_Amb)
+Amb2 = emmeans(glmer_Amb, ~ Cue)
+summary(Amb2)
+contrast(Amb2, method = 'tukey')
+
+#plot
+with(Amb, boxplot(prop_out ~ Cue))
+```
+
+glmer COLUMN2 for slopes
+```{r}
+new_in_out2 = new_in_out2[new_in_out2$Cue != "conspecific",]
+glmer_in_out2 = glmer(cbind(Out, In) ~ pH * Cue + (1|trial) + (1|ind) , data = new_in_out2, family = binomial)
+summary(glmer_in_out2)
+
+g22 = emtrends(glmer_in_out2, ~ Cue, var = "pH")
+summary(g22)
+contrast(g22, method = 'tukey')
+#slope between crab and pisaster are sig diff (p = .02) but slope between crab-no cue and pis-no cue are not sig diff
+with(new_in_out2, boxplot(prop_out ~ pH * Cue))
+```
+
+
+
+
+
+
+
+```{r}
+#generate three curves; we did this to run estimates with bootstrapping to see which experimental design sampling size would hinder the experiment least
+
+library(lme4)
+library(emmeans)
+d.fin=rep(20, 1000)
+for(i in 1:length(d.fin) ){
+  
+x = c(6.49, 6.73, 7.07, 7.32, 7.56, 7.8, 8.08)
+sde=5
+
+
+y.consp.out=NULL
+for(j in 1:5){
+y.consp = 3.22*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size)
+
+y.consp.out.sub = round(plogis(y.consp) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.consp.out=c(y.consp.out, y.consp.out.sub)
+}
+
+#can now do this for pisaster and cancer crab
+y.crab.out=NULL
+for(k in 1:5){
+y.crab = 3.59*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size)
+y.crab.out.sub = round(plogis(y.crab) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.crab.out=c(y.crab.out, y.crab.out.sub)
+}
+
+#Pisaster
+y.pis.out=NULL
+for(l in 1:5){
+y.pis = 2.75*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size) 
+y.pis.out.sub = round(plogis(y.pis) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.pis.out=c(y.pis.out, y.pis.out.sub)
+}
+
+Out=c(y.consp.out, y.crab.out, y.pis.out)
+In=8-Out
+Cue=c(rep('Control',length(y.consp.out)), rep('Crab', length(y.crab.out)), rep('Pisaster', length(y.pis.out)))
+pH=rep(x, 5*3)
+
+d1=data.frame(Out, In, Cue, pH)
+d1$Ranef=seq(from =1, to =nrow(d1), by=1)
+d1.glmer=glm(cbind(Out,In)~pH*Cue, family=binomial, data=d1)
+summary(d1.glmer)
+d1.em=contrast(emmeans(d1.glmer,~'Cue', var='pH'), method='tukey')
+d1.em=data.frame(d1.em)
+d1.em$p.value
+d.fin[i]=d1.em$p.value[1]
+plot(Out/(Out+In)~pH, xlab=paste(i))
+}
+
+length(d.fin[d.fin<0.05])
+
+#######Manipulate sample size
+d.fin=rep(20, 1000)
+for(i in 1:length(d.fin) ){
+  
+x = c(6.49, 6.73, 7.07, 7.32, 7.56, 7.8, 8.08)
+sde=5
+
+y.consp.out=NULL
+for(j in 1:5){
+y.consp = 3.22*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size)
+
+y.consp.out.sub = round(plogis(y.consp) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.consp.out=c(y.consp.out, y.consp.out.sub)
+}
+
+#can now do this for pisaster and cancer crab
+y.crab.out=NULL
+for(k in 1:7){
+y.crab = 3.59*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size)
+y.crab.out.sub = round(plogis(y.crab) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.crab.out=c(y.crab.out, y.crab.out.sub)
+}
+
+#Pisaster
+y.pis.out=NULL
+for(l in 1:3){
+y.pis = 2.75*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size) 
+y.pis.out.sub = round(plogis(y.pis) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.pis.out=c(y.pis.out, y.pis.out.sub)
+}
+
+Out=c(y.consp.out, y.crab.out, y.pis.out)
+In=8-Out
+Cue=c(rep('Control',length(y.consp.out)), rep('Crab', length(y.crab.out)), rep('Pisaster', length(y.pis.out)))
+pH=rep(x, 5*3)
+
+d1=data.frame(Out, In, Cue, pH)
+d1$Ranef=seq(from =1, to =nrow(d1), by=1)
+d1.glmer=glm(cbind(Out,In)~pH*Cue, family=binomial, data=d1)
+summary(d1.glmer)
+d1.em=contrast(emmeans(d1.glmer,~'Cue', var='pH'), method='tukey')
+d1.em=data.frame(d1.em)
+d1.em$p.value
+d.fin[i]=d1.em$p.value[1]
+plot(Out/(Out+In)~pH, xlab=paste(i))
+}
+length(d.fin[d.fin<0.05])
+
+```
+
+
