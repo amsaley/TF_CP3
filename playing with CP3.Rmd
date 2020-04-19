@@ -1,0 +1,1407 @@
+
+set-ups: loads all files needed 'library section'
+```{r}
+library(lme4) #lme model
+library(emmeans) #tukey posthoc...well it is supposed to be
+library(dplyr) #create new dataframe
+library(tidyr) #create new dataframe
+library(jtools)
+library(readxl)
+
+library(boot)
+library(DHARMa) 
+```
+
+
+loading data
+```{r}
+setwd('/Users/alishamsaley/Documents/Pred_Prey OA Pilots/TF_CP3/')
+data = read_xlsx('playing.xlsx')
+data = data[data$treatment != 'conspecific' ,] #delete values for conspecific
+#data = data[data$pH_ave < 8.01 ,]
+View(data)
+unique(data$treatment)
+
+
+```
+
+plotting in_out; creating a new dataframe that gives the proportion of time out of the water for each individual.
+```{r}
+data$treatment[data$treatment == "no cue"] = 0
+data$treatment[data$treatment == "pisaster"] = 1
+data$treatment[data$treatment == "crab"] = 2
+data$treatment = as.numeric(data$treatment)
+
+data$ind = as.factor(data$ind)
+new_d = data %>% group_by(ind) %>% dplyr::summarise(pH = mean(pH_ave), trial = mean(Trial), Cue = mean(treatment), prop_in = sum(in_out)/n(), prop_in2 = sum(in_out2)/n(), In = sum(in_out),In2 = sum(in_out2), Total = length(ind), Out = Total - In, Out2 = Total - In2, prop_out = 1- prop_in, prop_out2 = 1- prop_in2)
+View(new_d)
+
+new_d$Cue[new_d$Cue == 0] = "no cue"
+new_d$Cue[new_d$Cue == 1] = "pisaster"
+new_d$Cue[new_d$Cue == 2] = "crab"
+```
+
+FIGURE AS OF 12/12/19
+plotting and running glmer: also predicting 95CI from glmer and plotting that too.
+```{r}
+
+#make a plot based on pH values and cue type
+par(mfrow = c(1,1))
+#empty plot for prop out2
+plot(prop_out2 ~ pH, type = "n", xlab = 'pH acclimation', ylab = 'prop out of water', bty = 'n', main = "prop out all2", data = new_d)
+#fill with colors based on cue type
+points(prop_out2 ~ pH, data = new_d[new_d$Cue == 'pisaster',], col = "purple", pch = 16)
+points(prop_out2 ~ pH, data = new_d[new_d$Cue == 'no cue',], col = "black", pch = 16)
+points(prop_out2 ~ pH, data = new_d[new_d$Cue == 'crab',], col = "red", pch = 16)
+#abline(lm(prop_out2~pH, data = new_d[new_d$Cue == 'pisaster',]), col = "purple")
+#abline(lm(prop_out2~pH, data = new_d[new_d$Cue == 'no cue',]), col = "black")
+#abline(lm(prop_out2~pH, data = new_d[new_d$Cue == 'crab',]), col = "red")
+
+#GLMER in_out2
+glmer_IO2 = glmer(cbind(Out2, In2) ~ Cue * pH + (1|ind), data = new_d, family = binomial) 
+summary(glmer_IO2)
+
+#tried the model not using cbind to see if there was a difference
+#glmer_IO = glm(prop_out2 ~ Cue * pH, data = new_d, family = binomial) 
+#summary(glmer_IO)
+
+GIO2 = emtrends(glmer_IO2, ~ Cue, var = "pH")
+summary(GIO2)
+contrast(GIO2, method = 'tukey')
+#predict values from glmer_IO #we are going to create a dataframe that has the 'filler points' with a predicted y value to give our s-shape curve higher resolution...
+xx = expand.grid(pH = seq(from = 6.0, to = 9, by = 0.05), Cue = c('crab', 'no cue','pisaster'), Out2 = 0, In2 = 0)
+mm = model.matrix(terms(glmer_IO2), xx)
+xx$out = (mm%*%fixef(glmer_IO2))
+#View(n_in_out1.x)
+
+#95CI around models; error bars
+pvar1 = diag(mm%*%tcrossprod(vcov(glmer_IO2), mm))
+cmult = 1.96
+newdat = data.frame(xx, plo = xx$out - cmult * sqrt(pvar1), phi = xx$out + cmult * sqrt(pvar1))
+View(newdat)
+
+par(mfrow= c(1,1))
+#plot using predicted values from glmer_IO
+plot(plogis(out) ~ pH, main = "where do the CI's converge and diverge for ALL2", ylim = c(0,1), xlim = c(6.00,8), data = xx, bty = "n", type = "n")
+CrCI = newdat[newdat$Cue == "crab",]
+PCI = newdat[newdat$Cue == "pisaster",]
+NoCI = newdat[newdat$Cue == "no cue",]
+
+polygon(c(CrCI$pH,rev(CrCI$pH)),c(plogis(CrCI$plo),rev(plogis(CrCI$phi))),col="light pink", border = NA)
+polygon(c(PCI$pH,rev(PCI$pH)),c(plogis(PCI$plo),rev(plogis(PCI$phi))),col="thistle", border = NA)
+polygon(c(NoCI$pH,rev(NoCI$pH)),c(plogis(NoCI$plo),rev(plogis(NoCI$phi))),col="grey85", border = NA)
+
+points(plogis(out) ~ pH, data = xx[xx$Cue == 'pisaster',], col = "orchid4", pch = 16)
+points(plogis(out) ~ pH, data = xx[xx$Cue == 'no cue',], col = "black", pch = 16)
+points(plogis(out) ~ pH, data = xx[xx$Cue == 'crab',], col = "red", pch = 16)
+#lines(x = c(6,9), y = c(0.5,0.5))
+
+lines(plogis(plo) ~ pH, data = newdat[newdat$Cue == "crab",], col = "red", lty = 2)
+lines(plogis(phi) ~ pH, data = newdat[newdat$Cue == "crab",], col = "red", lty = 2)
+
+lines(plogis(plo) ~ pH, data = newdat[newdat$Cue == "no cue",], col = "black", lty = 2)
+lines(plogis(phi) ~ pH, data = newdat[newdat$Cue == "no cue",], col = "black", lty = 2)
+
+lines(plogis(plo) ~ pH, data = newdat[newdat$Cue == "pisaster",], col = "purple", lty = 2)
+lines(plogis(phi) ~ pH, data = newdat[newdat$Cue == "pisaster",], col = "purple", lty = 2)
+lines(x = c(7.96,7.96), y = c(0,1), col = 'navy', lwd = 4)#where the two (crab and no cue) CI lines diverge...
+#lines(x = c(7.13,7.13), y = c(0,1)) #where pisaster and crab are no longer differentiated...
+lines(x = c(7.7,7.7), y = c(0,1), col = 'goldenrod3', lwd = 4) 
+
+#The function takes in an x vector and a y vector, defining a set of coordinates that, in order, taken in order trace around the area to be shaded. Thus for a set of points 1-10, defined individually as x.1, y.1 to x.10, y.10,
+#polygon(c(x,rev(x)),c(y2,rev(y1)),col="skyblue")
+
+#The first half of the x-vector in the polygon is just the values of x itself, corresponding to the part of the polygon that is tracing out the upper curve along increasing values of x. The second part for of the x-vector in the polygon is the reverse of x, corresponding to the part of the polygon that is tracing out the lower curve along decreasing values of x. The first part of the y-vector is the y values of the upper curve, and the second part of the y-vector is the y values of the lower part of the curve.
+#http://www.alisonsinclair.ca/2011/03/shading-between-curves-in-r/
+
+
+#From the 95CI overlap using predict (less correct bc assumes normal distribution of data and equal variance) the CI's don't overlap at the amb pH level I testing aka most environmentally relevant. Therefore, maybe it is ok they are overlapping at the inflection point because I am not really concerned with the IP of no cue if I don't predict that would be their response? essentially, can I compare the two cue types  using a logistic curve and then fit a linear model to no cue data if it better describes the dataset?
+
+# ASK BRIAN ABOUT THIS!!!
+##used average pH level to describe each of the treatments...should I then be comparing the tendency to the "average" pH an individual would face in a tidepool versus the highest pH's recorded in the environment? As in, taking into account the low pH's they face in the tide pools this would mean that their average pH they deal with is not in fact 8 or 8.1 (which was the "ambient" level in my original assumption)
+
+```
+
+
+What are snails doing if they are not leaving the water??
+```{r}
+data = data[data$Trial > 10,]
+data$treatment[data$treatment == "no cue"] = 0
+data$treatment[data$treatment == "pisaster"] = 1
+data$treatment[data$treatment == "crab"] = 2
+data$treatment = as.numeric(data$treatment)
+data$ind = as.factor(data$ind)
+new = data %>% group_by(ind) %>% dplyr::summarise(pH = mean(pH_ave), trial = mean(Trial), Cue = mean(treatment), prop_in = sum(in_out)/n(), prop_in2 = sum(in_out2)/n(), In = sum(in_out),In2 = sum(in_out2), Total = length(ind), Out = Total - In, Out2 = Total - In2, prop_out = 1- prop_in, prop_out2 = 1- prop_in2, Pwall = sum(wall)/n(), Pcor = sum(corner)/n(), Pbot = sum(bottom)/n())
+View(new)
+new$Cue[new$Cue == 0] = "no cue"
+new$Cue[new$Cue == 1] = "pisaster"
+new$Cue[new$Cue == 2] = "crab"
+
+
+
+##plots
+plot(Pwall ~ pH, data = new, type = "n", xlab = "pH acclimation", ylab = "prop time on wall", bty = "n", main = "prop time on wall")
+points(Pwall ~ pH, data = new[new$Cue == 'pisaster',], col = "purple", pch = 16)
+points(Pwall ~ pH, data = new[new$Cue == 'no cue',], col = "black", pch = 16)
+points(Pwall ~ pH, data = new[new$Cue == 'crab',], col = "red", pch = 16)
+
+plot(Pbot ~ pH, data = new, type = "n", xlab = "pH acclimation", ylab = "prop time on bottom", bty = "n", main = "prop time on bottom")
+points(Pbot ~ pH, data = new[new$Cue == 'pisaster',], col = "purple", pch = 16)
+points(Pbot ~ pH, data = new[new$Cue == 'no cue',], col = "black", pch = 16)
+points(Pbot ~ pH, data = new[new$Cue == 'crab',], col = "red", pch = 16)
+
+plot(Pcor ~ pH, data = new, type = "n", xlab = "pH acclimation", ylab = "prop time in corner", bty = "n", main = "prop time in corner")
+points(Pcor ~ pH, data = new[new$Cue == 'pisaster',], col = "purple", pch = 16)
+points(Pcor ~ pH, data = new[new$Cue == 'no cue',], col = "black", pch = 16)
+points(Pcor ~ pH, data = new[new$Cue == 'crab',], col = "red", pch = 16)
+
+
+```
+ #########T3 BOOTSTRAP STATS ARE SHOWING NA NO MATTER WHAT REP NUMBER I CHOOSE###
+bootstrapping for the inflection point
+```{r}
+#This is the final statistical model used for the experiment based on AIC scores 
+glmer_IO2 = glmer(cbind(Out2, In2) ~ Cue * pH + (1|ind), data = new_d, family = binomial, control=glmerControl(optimizer='bobyqa', optCtrl=list(maxfun=2e5))) 
+summary(glmer_IO2)
+plot(resid(glmer_IO2)~predict(glmer_IO2))
+plot(simulateResiduals(glmer_IO2)) #QQ plot is almost right on; Resid v predict almost has full horizontal lines!
+
+#create some empty objects
+x = seq(from = 6, to = 8, by = .01)
+
+##Creates the function to calculate inflection points based on the model to feed into the bootstrap function
+#function(your input "i give you data and indices and you spit out inflection")
+inflection = function(new_d, indices)
+{
+  d = new_d[indices,]
+  glmer_IO2 = glmer(cbind(Out2, In2) ~ Cue * pH + (1|ind), data = d, family = binomial) 
+  #d=new_d[indices,] :resampling procedure; indices just says to grab everything from each row of data in DF
+#d is new dataframe from the resampled
+#glmer model; data = d --run a glmer on resampled population set. the coefficients for each new d will be different
+  
+  #Collects the model estimates for the intercept and slopes
+intC=fixef(glmer_IO2)[1] #intercept coefficient
+N=fixef(glmer_IO2)[2] #intercept coefficient
+P=fixef(glmer_IO2)[3] #intercept coefficient
+pHC=fixef(glmer_IO2)[4] #slope est Crab
+pHN=fixef(glmer_IO2)[5] #slope est No
+pHP=fixef(glmer_IO2)[6] #slope est Pis
+
+#From the model estimates, creates a predicted curve for Crab, No Cue, and Pisaster cue treatments
+#in normal linear space
+y = 1/(1+exp(-1*(intC+pHC*x))) ###crab
+z = 1/(1+exp(-1*(intC+N +pHC*x+pHN*x)))  ##line for no cue
+q = 1/(1+exp(-1*(intC+P +pHC*x+pHP*x))) ##line for pisaster
+## y = b + mx; from output summary of glmer--
+# crab b = intC; m = phC
+# no cue b = intC + pHN; m = pHC*x + pHN*x
+# pisaster b = intC + P; m = pHC*x + pHP*x
+#to check if the line is correct plot this over the predict lines from your model and they should be exactly overlapping!
+
+####from here---given this line tell me what the x value is at y = 0.5
+#Once the predicted curve is created, a for loop is used to calculate the inflection point of the curve. For the purposes of this experiment, the inflection point is defines as the x value that corresponds with a y value = 0.5
+
+acclim = seq(from = 6, to = 8, by = .01)
+inflecC = data.frame(acclim, y) #data.frame(xvalue, yvalue)
+inflecN = data.frame(acclim, z)
+inflecP = data.frame(acclim, q)
+
+#IPcrab = mean(inflecC[inflecC$y > .49 & inflecC$y < 0.51,]$acclim) #crab
+#IPno = mean(inflecN[inflecN$z > .49 & inflecN$z < 0.51,]$acclim) #no cue
+#IPpis = mean(inflecP[inflecN$q > .49 &inflecN$z < 0.51,]$acclim) #pisaster
+#test.dataframe=c(IPcrab, IPno, IPpis)
+
+IPcrab = mean(inflecC[inflecC$acclim > 7.95,]$y) #crab
+IPno = mean(inflecN[inflecN$acclim > 7.95,]$z) #no cue
+IPpis = mean(inflecP[inflecN$acclim > 7.95,]$q) #pisaster
+test.dataframe=c(IPcrab, IPno, IPpis)
+
+  	#Creates a plot as the bootstrap is running just for visualization
+	lines(y~x, col="red") #crab
+	lines(z~x, col="black") #no cue
+	lines(q~x, col="purple") #pisaster 
+	return(test.dataframe)
+}
+
+plot(prop_out2 ~ pH, ylab = "prop time out of water", xlab = "pH (total scale) acclimation", col = c("red", "black", "purple")[new_d$Cue], pch = 19, data = new_d, xlim = c(6,8))
+#lines(x = c(6,8), y = c(0.5,0.5)) #inflection point
+lines(x = c(8,8), y = c(0,1)) #highest pH treatment sampled.
+
+data.boot = boot(data = new_d, statistic = inflection, R=50)
+#Qs from bootstrap; can I plot the no cue as a linear function and not logistic? There isn't evidence that they will response without cue in a logistic fashion based on my other plots so do we choose logistic because otherwise it wouldn't be a control? 
+#How do I use the bootstrap for no cue when the variability 'explodes' above the pH values that I tested. It doesn't seem right to use a bootstrap in this case, however, potentially the most correct in terms of comparisons
+
+data.boot
+plot(data.boot, index=1)
+
+
+boot.ci(data.boot, type='perc', conf=.95, index=1)
+boot.ci(data.boot, type='perc', conf=.95, index=2)
+boot.ci(data.boot, type='perc', conf=.95, index=3)
+#can also use type = bca; see this website: https://www.datacamp.com/community/tutorials/bootstrap-r
+
+#bootstrapping: sampling with replacement for the same sample size; with a smaller orignal sample size and sampling with replacement you are most likely to selecting outliers than if your OG dataset is larger (n)
+#as a result, if you bootstrap either; the mean will still be around the same but the spread of the histogram will be larger. 
+#then cut off the 2.5% from both ends for a 95CI and see if those CIs overlap (not p value test)
+#BS doesn't care about the distribution of your OG dataset; doesn't have a lot of assumptions...when you just look at CI around OG dataset there are assumptions that aren't held by doing the CI in BS; 
+#reason: to create CI for a particular parameter (mean, variance, r^2 value, slope, inflection, etc); we can normally use a CI around a mean, etc and we have formulas for that...however, for variance/r^2/inflection pt we don't have a formula to calculate the spread
+#the larger the underlying sample size; the tighter the confidence intervals.
+
+```
+
+plots and glmers for prop out 1---NOT USING THIS MODEL
+```{r}
+
+#empty plot for prop out 1
+plot(prop_out ~ pH, type = "n", xlab = 'pH acclimation', ylab = 'prop out of water', bty = 'n', main = "prop out all1", data = new_d)
+#fill with colors based on cue type
+points(prop_out ~ pH, data = new_d[new_d$Cue == 'pisaster',], col = "purple", pch = 16)
+points(prop_out ~ pH, data = new_d[new_d$Cue == 'no cue',], col = "black", pch = 16)
+points(prop_out ~ pH, data = new_d[new_d$Cue == 'crab',], col = "red", pch = 16)
+abline(lm(prop_out~pH, data = new_d[new_d$Cue == 'pisaster',]), col = "purple")
+abline(lm(prop_out~pH, data = new_d[new_d$Cue == 'no cue',]), col = "black")
+abline(lm(prop_out~pH, data = new_d[new_d$Cue == 'crab',]), col = "red")
+
+
+#in_out
+glmer_IO1 = glmer(cbind(Out, In) ~ Cue * pH + (1|ind), data = new_d, family = binomial) 
+summary(glmer_IO1)
+
+GIO1 = emtrends(glmer_IO1, ~ Cue, var = "pH")
+summary(GIO1)
+contrast(GIO1, method = 'tukey')
+
+
+#predict values from glmer_IO
+xx1 = expand.grid(pH = seq(from = 6.0, to = 9, by = 0.05), Cue = c('crab', 'no cue','pisaster'), Out = 0, In = 0)
+mm1 = model.matrix(terms(glmer_IO1), xx1)
+xx1$out = (mm1%*%fixef(glmer_IO1))
+
+#95CI around models; error bars
+pvar1 = diag(mm%*%tcrossprod(vcov(glmer_IO1), mm1))
+cmult = 1.96
+newdat = data.frame(xx1, plo = xx1$out - cmult * sqrt(pvar1), phi = xx1$out + cmult * sqrt(pvar1))
+View(newdat)
+
+plot(plogis(out) ~ pH, main = "where do the CI's converge and diverge for ALL2", ylim = c(0,1), xlim = c(6.00,8), data = xx1, bty = "n", type = "n")
+CrCI = newdat[newdat$Cue == "crab",]
+PCI = newdat[newdat$Cue == "pisaster",]
+NoCI = newdat[newdat$Cue == "no cue",]
+
+polygon(c(CrCI$pH,rev(CrCI$pH)),c(plogis(CrCI$plo),rev(plogis(CrCI$phi))),col="light pink", border = NA)
+polygon(c(PCI$pH,rev(PCI$pH)),c(plogis(PCI$plo),rev(plogis(PCI$phi))),col="thistle", border = NA)
+polygon(c(NoCI$pH,rev(NoCI$pH)),c(plogis(NoCI$plo),rev(plogis(NoCI$phi))),col="grey85", border = NA)
+
+points(plogis(out) ~ pH, data = xx1[xx1$Cue == 'pisaster',], col = "orchid4", pch = 16)
+points(plogis(out) ~ pH, data = xx1[xx1$Cue == 'no cue',], col = "black", pch = 16)
+points(plogis(out) ~ pH, data = xx1[xx1$Cue == 'crab',], col = "red", pch = 16)
+
+
+
+par(mfrow= c(2,2))
+#plot using predicted values from glmer_IO
+with(xx1, plot(out ~ pH, main = "in out 1"))
+points(plogis(out) ~ pH, data = xx1[xx1$Cue == 'pisaster',], col = "orchid4", pch = 16)
+points(out ~ pH, data = xx1[xx1$Cue == 'no cue',], col = "black", pch = 16)
+points(out ~ pH, data = xx1[xx1$Cue == 'crab',], col = "red", pch = 16)
+```
+
+####Coding used before photos were correctly relabeled
+
+---
+title: "TF_CP3"
+output: html_document
+---
+set-ups: loads all files needed 'library section'
+```{r}
+library(lme4) #lme model
+library(emmeans) #tukey posthoc...well it is supposed to be
+library(dplyr) #create new dataframe
+library(tidyr) #create new dataframe
+library(jtools)
+library(readxl)
+library(DHARMa)
+library(alr3)
+
+```
+
+loading data
+```{r}
+setwd('/Users/alishamsaley/Documents/Pred_Prey OA Pilots/TF_CP3/')
+tfave <- read_xlsx('pH averages.xlsx')
+View(tfave)
+
+in_out = read_xlsx('practice.xlsx')
+View(in_out)
+in_out$treatment[in_out$treatment == "carb"] = "crab" #cleaning up df
+#in_out = in_out[in_out$treatment != 'conspecific' ,] #delete values for conspecific
+with(in_out, unique(treatment))
+
+c = read_xlsx("ALLcoordinates.xlsx")
+View(c)
+unique(c$pH_ave)
+
+d = c[c$Timestamp < 5,]
+View(e)
+e = c[c$Timestamp > 29,]
+
+c = read_xlsx("time 0.xlsx")
+View(c)
+unique(c$pH_ave)
+```
+
+calculating ave pH by tank
+```{r}
+SE = function(x) { SE = sd(x)/sqrt(length(x))
+return(SE)}
+se = aggregate(tfave$`corrected pH`, by = list(tfave$Tank, tfave$Group), FUN = SE)
+View(se)
+ave = aggregate(tfave$`corrected pH`, by = list(tfave$Tank, tfave$Group), FUN = mean)
+names(ave) = c("tank", "group", "corr_pH")
+View(ave)
+# write.csv(ave, "ave pH.csv", row.names = F) write csv
+ave$indiv = 1:nrow(ave) # make new column with values for "individuals"
+  
+ave$SE = se$x
+ave$xplus = ave$corr_pH + ave$SE
+ave$xminus = ave$corr_pH - ave$SE
+
+###trying to see if I can reorder by ascending pH values and reapply the individual ordering for a cleaner pH plot
+#used this df for plotting below
+ave1 = ave
+View(ave1)
+ave1 <- ave1[order(ave1$corr_pH),]  #reordering dataframe from smallest pH to largest
+ave1$indiv = 1:nrow(ave1) #giving each row a new number
+
+
+```
+plot pH averages with SE points
+```{r}
+with(ave1, plot(corr_pH ~ indiv, xlab = 'tank', ylab = 'actual pH range', pch = 19, col = 'cyan'))
+segments(ave1$indiv, ave1$xminus, ave1$indiv, ave1$xplus,
+       col = "black", lty = par("lty"), xpd = FALSE) #adding a SE bar to each point
+colors() #find a list of the colors available
+unique(ave1$corr_pH)
+```
+
+creating new dataframe with IN OUT summaries for glmer: called new_in_out
+```{r}
+#rename c and nc to numbers for new dataframe...because we are using mean function
+in_out$treatment[in_out$treatment == "no cue"] = 0
+in_out$treatment[in_out$treatment == "pisaster"] = 1
+in_out$treatment[in_out$treatment == "crab"] = 2
+in_out$treatment[in_out$treatment == "conspecific"] = 3
+in_out$treatment = as.numeric(in_out$treatment)
+unique(in_out$treatment) #tells me all of the values
+
+in_out$Trial[in_out$Trial == "1_gA"] = 1
+in_out$Trial[in_out$Trial == "2_gB"] = 2
+in_out$Trial[in_out$Trial == "3_gC"] = 3
+in_out$Trial[in_out$Trial == "4_gD"] = 4
+in_out$Trial[in_out$Trial == "5_gE"] = 5
+in_out$Trial[in_out$Trial == "6_gF"] = 6
+in_out$Trial[in_out$Trial == "7_gG"] = 7
+in_out$Trial[in_out$Trial == "8_gH"] = 8
+in_out$Trial[in_out$Trial == "9_gI"] = 9
+in_out$Trial[in_out$Trial == "10_gJ"] = 10
+
+in_out$accgroup[in_out$accgroup == "A"] = 1
+in_out$accgroup[in_out$accgroup == "B"] = 2
+in_out$accgroup[in_out$accgroup == "C"] = 3
+in_out$accgroup[in_out$accgroup == "D"] = 4
+in_out$accgroup[in_out$accgroup == "E"] = 5
+in_out$accgroup[in_out$accgroup == "F"] = 6
+in_out$accgroup[in_out$accgroup == "G"] = 7
+in_out$accgroup[in_out$accgroup == "H"] = 8
+in_out$accgroup[in_out$accgroup == "I"] = 9
+in_out$accgroup[in_out$accgroup == "J"] = 10
+in_out$accgroup = as.numeric(in_out$accgroup)
+
+in_out$ind = as.factor(in_out$ind)
+new_in_out = in_out %>% group_by(ind) %>% dplyr::summarise(trial = mean(as.numeric(Trial)), bin = mean(Bin), accBin= mean(accbin), accGroup = mean(accgroup), pH = mean(pH_ave), Cue = mean(treatment), prop_in = sum(in_out)/n(), prop_in2 = sum(in_out2)/n(), In = sum(in_out),In2 = sum(in_out2), Total = length(ind), Out = Total - In, Out2 = Total - In2, prop_out = 1- prop_in, prop_out2 = 1- prop_in2)
+View(new_in_out)
+#dplyr:: tells the function from which package to draw from
+#name = formula(name) is a way to create a new column in the dataframe using a 
+#function applied to the old dataframe
+
+#replace numbers with lettered codes in new dataframe
+new_in_out$Cue[new_in_out$Cue == "0"] = "no cue"
+new_in_out$Cue[new_in_out$Cue == "1"] = "pisaster"
+new_in_out$Cue[new_in_out$Cue == "2"] = "crab"
+new_in_out$Cue[new_in_out$Cue == "3"] = "conspecific"
+
+new_in_out$accGroup[new_in_out$accGroup == "1"] = "A"
+new_in_out$accGroup[new_in_out$accGroup == "2"] = "B"
+new_in_out$accGroup[new_in_out$accGroup == "3"] = "C"
+new_in_out$accGroup[new_in_out$accGroup == "4"] = "D"
+new_in_out$accGroup[new_in_out$accGroup == "5"] = "E"
+new_in_out$accGroup[new_in_out$accGroup == "6"] = "F"
+new_in_out$accGroup[new_in_out$accGroup == "7"] = "G"
+new_in_out$accGroup[new_in_out$accGroup == "8"] = "H"
+new_in_out$accGroup[new_in_out$accGroup == "9"] = "I"
+new_in_out$accGroup[new_in_out$accGroup == "10"] = "J"
+
+
+```
+subset of in_out to just look at ambient pH in_out rates: called la
+```{r}
+la = new_in_out
+View(la)
+la = la[la$pH > 7.9, ]
+par(mfrow = c(1,1))
+plot(prop_out2 ~ pH ~ pH, data = la)
+points(prop_out2 ~ pH, data = la[la$Cue == "pisaster",], col = "purple", pch = 19)
+points(prop_out2 ~ pH, data = la[la$Cue == "crab",], col = "red", pch = 19)
+points(prop_out2 ~ pH, data = la[la$Cue == "no cue",], col = "black", pch = 19)
+
+laa = aggregate(la$prop_out2, by = list(la$Cue), FUN = mean)
+View(laa) #ave prop out doesnot appear diff between no cue and crab at ambient pH...hmmm.
+
+
+```
+ 
+######ALL IN AND OUT PLOTS AND ANALYSES!##########
+ 
+plot of in_out based on true pH values now and organized by cue treatment type: used a new df name because it was from an old code script.
+```{r}
+n_in_out1 = new_in_out
+#remove the conspecifics
+n_in_out1 = n_in_out1[n_in_out1$Cue != 'conspecific' ,]
+#make a plot based on pH values and cue type
+View(n_in_out1)
+par(mfrow = c(3,2))
+
+#empty plot for prop out 1
+with(n_in_out1, plot(prop_out ~ pH, type = "n", xlab = 'pH acclimation', ylab = 'prop out of water', bty = 'n', main = "prop out 1"))
+#fill with colors based on cue type
+points(prop_out ~ pH, data = n_in_out1[n_in_out1$Cue == 'pisaster',], col = "purple", pch = 16)
+points(prop_out ~ pH, data = n_in_out1[n_in_out1$Cue == 'no cue',], col = "black", pch = 16)
+points(prop_out ~ pH, data = n_in_out1[n_in_out1$Cue == 'crab',], col = "red", pch = 16)
+
+#empty plot for prop out 2
+with(n_in_out1, plot(prop_out2 ~ pH, type = "n", xlab = 'pH acclimation', ylab = 'prop out of water', bty = 'n', main = "prop out 2"))
+#fill with colors based on cue type
+points(prop_out2 ~ pH, data = n_in_out1[n_in_out1$Cue == 'pisaster',], col = "purple", pch = 16)
+points(prop_out2 ~ pH, data = n_in_out1[n_in_out1$Cue == 'no cue',], col = "black", pch = 16)
+points(prop_out2 ~ pH, data = n_in_out1[n_in_out1$Cue == 'crab',], col = "red", pch = 16)
+#abline(lm(prop_out2~pH, data = n_in_out1[n_in_out1$Cue == 'pisaster',]), col = "purple")
+#abline(lm(prop_out2~pH, data = n_in_out1[n_in_out1$Cue == 'no cue',]), col = "black")
+#abline(lm(prop_out2~pH, data = n_in_out1[n_in_out1$Cue == 'crab',]), col = "red")
+
+
+```
+
+
+glmer time for slopes only; also for predict lines
+```{r}
+#in_out2
+glmer_IO = glmer(cbind(Out2, In2) ~ Cue * pH + (1|accGroup) + (1|ind), data = n_in_out1, family = binomial) 
+summary(glmer_IO)
+#AIC 471.2; effect of group is 0, effect of ind have variance of 9.86
+
+GIO = emtrends(glmer_IO, ~ Cue, var = "pH")
+summary(GIO)
+contrast(GIO, method = 'tukey') #crab and pisaster have sig diff slopes
+
+
+#predict values from glmer_IO
+n_in_out1.x = expand.grid(pH = seq(from = 6.1, to = 10, by = 0.1), Cue = c('crab', 'no cue','pisaster'), Out2 = 0, In2 = 0)
+
+mm = model.matrix(terms(glmer_IO), n_in_out1.x)
+n_in_out1.x$out = plogis(mm%*%fixef(glmer_IO))
+#View(n_in_out1.x)
+
+par(mfrow= c(1,1))
+#plot using predicted values from glmer_IO
+with(n_in_out1.x, plot(out ~ pH, main = "in out 2"))
+points(out ~ pH, data = n_in_out1.x[n_in_out1.x$Cue == 'pisaster',], col = "orchid4", pch = 16)
+points(out ~ pH, data = n_in_out1.x[n_in_out1.x$Cue == 'no cue',], col = "black", pch = 16)
+points(out ~ pH, data = n_in_out1.x[n_in_out1.x$Cue == 'crab',], col = "red", pch = 16)
+
+
+
+#in_out1; was not able to converge model...check for o's??
+glmer_IO2 = glmer(cbind(Out, In) ~ Cue * pH + (1|accGroup)+ (1|ind), data = n_in_out1, family = binomial) 
+summary(glmer_IO2)
+
+GIO2 = emtrends(glmer_IO2, ~ Cue, var = "pH")
+summary(GIO2)
+contrast(GIO2, method = 'tukey') #crab and pisaster have sig diff slopes
+
+
+#predict values from glmer_IO
+n_in_out1.x2 = expand.grid(pH = seq(from = 6.1, to = 8.2, by = 0.1), Cue = c('crab', 'no cue','pisaster'), Out = 0, In = 0)
+
+mm2 = model.matrix(terms(glmer_IO2), n_in_out1.x2)
+n_in_out1.x2$out = plogis(mm%*%fixef(glmer_IO2))
+#View(n_in_out1.x)
+
+par(mfrow= c(1,1))
+#plot using predicted values from glmer_IO
+with(n_in_out1.x2, plot(out ~ pH, main = "in out 2"))
+points(out ~ pH, data = n_in_out1.x2[n_in_out1.x2$Cue == 'pisaster',], col = "orchid4", pch = 16)
+points(out ~ pH, data = n_in_out1.x2[n_in_out1.x2$Cue == 'no cue',], col = "black", pch = 16)
+points(out ~ pH, data = n_in_out1.x2[n_in_out1.x2$Cue == 'crab',], col = "red", pch = 16)
+
+```
+inflection point work:
+```{r}
+#first find the coefficients: intercept and slope for the line you have
+coef(glmer_IO)
+#then, plug into the following equation to calculate inflection point (prob = 0.50)
+
+
+```
+
+
+playing with gabriel
+```{r}
+#individual not used as a random effect. overestimating the DF because we are using cbind which has 8 datapoints per individual
+glmer_IO3 = glm(cbind(Out2, In2) ~ Cue * pH, data = n_in_out1, family = binomial) 
+summary(glmer_IO3)
+GIO3 = emtrends(glmer_IO3, ~ Cue, var = "pH")
+summary(GIO3)
+contrast(GIO3, method = 'tukey')
+#AIC 793; 
+
+
+n_in_out1.x3 = expand.grid(pH = seq(from = 6.1, to = 8.2, by = 0.1), Cue = c('crab', 'no cue','pisaster'), Out2 = 0, In2 = 0)
+
+mm3 = model.matrix(terms(glmer_IO3), n_in_out1.x3)
+n_in_out1$gabe = (predict(glmer_IO3)) 
+
+par(mfrow= c(1,1))
+#plot using predicted values from glmer_IO
+with(n_in_out1, plot(gabe ~ pH, main = "glmer3"))
+points(gabe ~ pH, data = n_in_out1[n_in_out1$Cue == 'pisaster',], col = "orchid4", pch = 16)
+points(gabe ~ pH, data = n_in_out1[n_in_out1$Cue == 'no cue',], col = "black", pch = 16)
+points(gabe ~ pH, data = n_in_out1[n_in_out1$Cue == 'crab',], col = "red", pch = 16)
+
+#not using "in out" but using prop_out2; best AIC score so far?
+glmer_IO4 = glm(prop_out2 ~ Cue * pH, data = n_in_out1, family = binomial) 
+summary(glmer_IO4)
+
+```
+
+######COORDINATE TRACKING PLOTS AND ANALYSES!#######
+
+path dist from origin over time.
+```{r}
+View(c)
+#highest vs lowest pH levels
+par(mfrow=c(1,2))
+
+c$cue[c$cue == 0] = "no cue"
+c$cue[c$cue == 1] = "pisaster"
+c$cue[c$cue == 2] = "crab"
+
+Hipis = c[c$cue == "pisaster" & c$pH_ave > 7.9,]
+Hicra = c[c$cue == "crab" & c$pH_ave > 7.9,]
+Hino = c[c$cue == "no cue" & c$pH_ave > 7.9,]
+plot(dist ~ Timestamp, data = c, type = "n", bty = "n", main = "snails paths after start")
+for(i in 1:length(unique(Hipis))){
+  lines(dist ~ Timestamp, data = Hipis[Hipis$ind == unique(Hipis$ind)[i],], col = "purple", pch = 19)
+}
+for(i in 1:length(unique(Hicra))){
+  lines(dist ~ Timestamp, data = Hicra[Hicra$ind == unique(Hicra$ind)[i],], col = "red", pch = 19)
+}
+for(i in 1:length(unique(Hino))){
+  lines(dist ~ Timestamp, data = Hino[Hino$ind == unique(Hino$ind)[i],], col = "black", pch = 19)
+}
+
+Lopis = c[c$cue == "pisaster" & c$pH_ave < 6.5,]
+Locra = c[c$cue == "crab" & c$pH_ave < 6.5,]
+Lono = c[c$cue == "no cue" & c$pH_ave < 6.5,]
+plot(dist ~ Timestamp, data = c, type = "n", bty = "n", main = "snails paths after start")
+for(i in 1:length(unique(Lopis))){
+  lines(dist ~ Timestamp, data = Lopis[Lopis$ind == unique(Lopis$ind)[i],], col = "purple", pch = 19)
+}
+for(i in 1:length(unique(Locra))){
+  lines(dist ~ Timestamp, data = Locra[Locra$ind == unique(Locra$ind)[i],], col = "red", pch = 19)
+}
+for(i in 1:length(unique(Lono))){
+  lines(dist ~ Timestamp, data = Lono[Lono$ind == unique(Lono$ind)[i],], col = "black", pch = 19)
+  
+  legend(-80,45, legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+}
+
+#all pH levels
+pis = c[c$cue == "pisaster",]
+cra = c[c$cue == "crab",]
+no = c[c$cue == "no cue",]
+n=16
+PrbPal <- colorRampPalette(c("gray","Purple"))
+CrbPal <- colorRampPalette(c("gray","Red"))
+NrbPal <- colorRampPalette(c("gray","Black"))
+p = PrbPal(n)[as.numeric(cut(pis$pH_ave,breaks = n))]
+cr = CrbPal(n)[as.numeric(cut(cra$pH_ave,breaks = n))]
+not = NrbPal(n)[as.numeric(cut(no$pH_ave,breaks = n))]
+plot(dist ~ Timestamp, data = c, type = "n", bty = "n", main = "snails paths after start", ylab = "distance from origin (cm)")
+for(i in 1:length(unique(pis))){
+  lines(dist ~ Timestamp, data = pis[pis$ind == unique(pis$ind)[i],], col = p, pch = 19)
+}
+plot(dist ~ Timestamp, data = c, type = "n", bty = "n", ylab = "distance from origin (cm)")
+for(i in 1:length(unique(cra))){
+  lines(dist ~ Timestamp, data = cra[cra$ind == unique(cra$ind)[i],], col = cr, pch = 19)
+}
+plot(dist ~ Timestamp, data = c, type = "n", bty = "n", ylab = "distance from origin (cm)")
+for(i in 1:length(unique(no))){
+  lines(dist ~ Timestamp, data = no[no$ind == unique(no$ind)[i],], col = not, pch = 19)
+}
+legend('topleft', legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+
+
+```
+plot(dist ~ Timestamp, data = c, type = "n", bty = "n", main = "snails paths after start")
+for(i in 1:length(unique(pis))){
+  lines(dist ~ Timestamp, data = pis[pis$ind == unique(pis$ind)[i],], col = p, pch = 19)
+}
+plot(dist ~ Timestamp, data = c, type = "n", bty = "n")
+for(i in 1:length(unique(cra))){
+  lines(dist ~ Timestamp, data = cra[cra$ind == unique(cra$ind)[i],], col = cr, pch = 19)
+}
+plot(dist ~ Timestamp, data = c, type = "n", bty = "n")
+for(i in 1:length(unique(no))){
+  lines(dist ~ Timestamp, data = no[no$ind == unique(no$ind)[i],], col = not, pch = 19)
+}
+legend('topleft', legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+
+plotting timestamp of max distance from origin: Intercept is not equal to 0 but slope = 0 and no different among cue types! 
+```{r}
+# use aggregate to create new data frame with the maxima
+c.agg = aggregate(dist~ind, c, max)
+c.max = merge(c.agg, c)
+c.max = as.data.frame(c.max)
+View(c.max)
+c.min= (aggregate(Timestamp~ind, c.max, min))
+c.both = merge(c.max, c.min)
+c.both = c.both[c.both$dist > 14,]
+View(c.both)
+
+c.both$cue[c.both$cue == 0] = "no cue"
+c.both$cue[c.both$cue == 1] = "pisaster"
+c.both$cue[c.both$cue == 2] = "crab"
+
+Cpis = c.both[c.both$cue == "pisaster",]
+Ccra = c.both[c.both$cue == "crab",]
+Cno = c.both[c.both$cue == "no cue",]
+
+
+par(mfrow=c(1,1))
+
+plot(Timestamp ~ pH_ave, data = c.both, type = "n", bty = "n", main = "time to max distance from origin", ylab = "timestamp")
+points(Timestamp ~ pH_ave, data = Cpis, col = "purple", pch = 19)
+points(Timestamp ~ pH_ave, data = Ccra, col = "red", pch = 19)
+points(Timestamp ~ pH_ave, data = Cno, col = "black", pch = 19)
+
+v = lm(Timestamp ~ pH_ave * cue, data = c.both)
+summary(v)
+```
+       
+      
+plotting coordinates; high_low between cue types
+```{r}
+c$cue[c$cue == 0] = "no cue"
+c$cue[c$cue == 1] = "pisaster"
+c$cue[c$cue == 2] = "crab"
+
+par(mfrow=c(1,2))
+plot(FY ~ FX, bty = "n", type = "n", data = c, main = "pH > 7.9 coords")
+Hipis = c[c$cue == "pisaster" & c$pH_ave > 7.9,]
+Hicra = c[c$cue == "crab" & c$pH_ave > 7.9,]
+Hino = c[c$cue == "no cue" & c$pH_ave > 7.9,]
+for(i in 1:length(unique(Hipis))){
+  points(FY ~ FX, data = Hipis[Hipis$ind == unique(Hipis$ind)[i],], col = "purple", pch = 19)
+}
+for(i in 1:length(unique(Hicra))){
+  points(FY ~ FX, data = Hicra[Hicra$ind == unique(Hicra$ind)[i],], col = "red", pch = 19)
+}
+for(i in 1:length(unique(Hino))){
+  points(FY ~ FX, data = Hino[Hino$ind == unique(Hino$ind)[i],], col = "black", pch = 19)
+}
+legend(-80,45, legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+
+plot(FY ~ FX, bty = "n", type = "n", data = c, main = "pH < 6.5 coords")
+Lopis = c[c$cue == "pisaster" & c$pH_ave < 6.5,]
+Locra = c[c$cue == "crab" & c$pH_ave < 6.5,]
+Lono = c[c$cue == "no cue" & c$pH_ave < 6.5,]
+for(i in 1:length(unique(Lopis))){
+  points(FY ~ FX, data = Lopis[Lopis$ind == unique(Lopis$ind)[i],], col = "purple", pch = 19)
+}
+for(i in 1:length(unique(Locra))){
+  points(FY ~ FX, data = Locra[Locra$ind == unique(Locra$ind)[i],], col = "red", pch = 19)
+}
+for(i in 1:length(unique(Lono))){
+  points(FY ~ FX, data = Lono[Lono$ind == unique(Lono$ind)[i],], col = "black", pch = 19)
+}
+legend(-80,45, legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+```
+plotting coordinates based on cue type and pH; each graph is a diff pH grouping
+```{r}
+#making a color  a shaded range
+c$cue[c$cue == 0] = "no cue"
+c$cue[c$cue == 1] = "pisaster"
+c$cue[c$cue == 2] = "crab"
+pis = c[c$cue == "pisaster",]
+cra = c[c$cue == "crab",]
+no = c[c$cue == "no cue",]
+
+n=10
+PrbPal <- colorRampPalette(c("gray","Purple"))
+CrbPal <- colorRampPalette(c("gray","Red"))
+NrbPal <- colorRampPalette(c("gray","Black"))
+p = PrbPal(n)[as.numeric(cut(pis$pH_ave,breaks = n))]
+cr = CrbPal(n)[as.numeric(cut(cra$pH_ave,breaks = n))]
+not = NrbPal(n)[as.numeric(cut(no$pH_ave,breaks = n))]
+#plot(pH_ave ~ pH_ave, col = not, data = c) #does the color show up on a plot; just practice.
+ par(mfrow=c(2,2))
+plot(FY ~ FX, bty = "n", type = "n", data = c, main = "pisaster grey to purple", ylim = c(-80,80), xlim = c(-80,80))
+points(FY ~ FX, data = pis, col = p , pch = 19)
+plot(FY ~ FX, bty = "n", type = "n", data = c, main = "crab grey to red" , ylim = c(-80,80), xlim = c(-80,80))
+points(FY ~ FX, data = cra, col = cr , pch = 19)
+plot(FY ~ FX, bty = "n", type = "n", data = c, main = "no cue grey to black" , ylim = c(-80,80), xlim = c(-80,80))
+points(FY ~ FX, data = no, col = not , pch = 19)
+
+pis = c[c$cue == "pisaster",]
+cra = c[c$cue == "crab",]
+no = c[c$cue == "no cue",]
+###distances to the origin
+plot(dist ~ pH_ave, bty = "n", type = "n", data = c, main = "pisaster")
+points(dist ~ pH_ave, data = pis, col = "purple" , pch = 19)
+plot(dist ~ pH_ave, bty = "n", type = "n", data = c, main = "crab")
+points(dist ~ pH_ave, data = cra, col = "red" , pch = 19)
+plot(dist ~ pH_ave, bty = "n", type = "n", data = c, main = "no cue")
+points(dist ~ pH_ave, data = no, col = "black" , pch = 19)
+```
+##THIS WAS OLD FOR LOOP; NOT NEEDED ANYMORE
+for(i in 1:length(unique(pis))){
+  points(FY ~ FX, data = pis[pis$ind == unique(pis$ind)[i],], col = p, pch = 19)
+}
+for(i in 1:length(unique(cra))){
+  points(FY ~ FX, data = cra[cra$ind == unique(cra$ind)[i],], col = cr, pch = 19)
+}
+for(i in 1:length(unique(no))){
+  points(FY ~ FX, data = no[no$ind == unique(no$ind)[i],], col = not, pch = 19)
+}
+legend(-80,45, legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+
+making new_c aggregated df
+```{r}
+str(c)
+c$cue[c$cue == "no cue"] = 0
+c$cue[c$cue == "pisaster"] = 1
+c$cue[c$cue == "crab"] = 2
+
+c$Trial[c$Trial == "1"] = 11
+    c$Trial[c$Trial == "2"] = 12
+    c$Trial[c$Trial == "3"] = 13
+    c$Trial[c$Trial == "4"] = 14
+    c$Trial[c$Trial == "5"] = 15
+    c$Trial[c$Trial == "6"] = 16
+    c$Trial[c$Trial == "7"] = 17
+    c$Trial[c$Trial == "8"] = 18
+    c$Trial[c$Trial == "9"] = 19
+    c$Trial[c$Trial == "10"] = 20
+c$Trial[c$Trial == "1_gA"] = 1
+  c$Trial[c$Trial == "2_gB"] = 2
+  c$Trial[c$Trial == "3_gC"] = 3
+  c$Trial[c$Trial == "4_gD"] = 4
+  c$Trial[c$Trial == "5_gE"] = 5  
+  c$Trial[c$Trial == "6_gF"] = 6
+  c$Trial[c$Trial == "7_gG"] = 7
+  c$Trial[c$Trial == "8_gH"] = 8
+  c$Trial[c$Trial == "9_gI"] = 9
+  c$Trial[c$Trial == "10_gJ"] = 10
+  
+
+View(c)
+c$Trial = as.numeric(c$Trial)
+c$cue = as.numeric(c$cue)
+new_c = c%>% group_by(ind) %>% dplyr::summarise(pH = mean(pH_ave), accT = mean(acc_tank), Cue = mean(cue), avX = mean(FX), avY = mean(FY), mdist = max(dist), midist = min(dist), avedis2 = mean(dist), avedis = sqrt((avX^2) + (avY^2)), Group = mean (Trial), avdiscent = (sum(sqrt((FX-avX)^2 + (FY-avY)^2)))/(length(ind)), wand = avdiscent/(sqrt(avX^2 + avY^2))) #why aren't my two aveerage distances the same? They theoretically should be.
+View(new_c)
+new_c$cent = pi*(new_c$avdiscent)^2
+
+```
+
+plotting coordinates; max and ave coordinates around origin--
+```{r}
+new_c$Cue[new_c$Cue == 0] = "no cue"
+new_c$Cue[new_c$Cue == 1] = "pisaster"
+new_c$Cue[new_c$Cue == 2] = "crab"
+
+par(mfrow=c(2,2))
+
+#max coord---NOT ACTUALLY MAX COORDINATE...NEED TO FIGURE OUT HOW TO SUBSET AND PLOT THIS.
+#plot(Y ~ X, data = new_c, bty = "n", type = "n", main = "max coordinates")
+#points(Y ~ X, data = new_c[new_c$Cue == "pisaster",], col = "purple", pch = 19)
+#points(Y ~ X, data = new_c[new_c$Cue == "crab",], col = "red", pch = 19)
+#points(Y ~ X, data = new_c[new_c$Cue == "no cue",], col = "black", pch = 19)
+#legend(-23, 50, legend =c('pisaster', 'crab', 'no cue'), 
+       #box.lty = 0,
+       #fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+
+#average coordinates
+plot(avY ~ avX, data = new_c, bty = "n", type = "n", main = "average coordinates")
+points(avY ~ avX, data = new_c[new_c$Cue == "pisaster",], col = "purple", pch = 19)
+points(avY ~ avX, data = new_c[new_c$Cue == "crab",], col = "red", pch = 19)
+points(avY ~ avX, data = new_c[new_c$Cue == "no cue",], col = "black", pch = 19)
+legend(-60, 50, legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+```
+
+transforming "distance" metrics from origin.
+```{r}
+#max dist; mdist
+#look at overall distribution of data
+hist(new_c$mdist) #right tail skewed; non normal distribution of data; GAMMA DISTRIBUTION
+# Make quantile plots of the response variable. A normal quantile plot visually compares the distribution of some data to a normal distribution. 
+qqnorm(new_c$mdist, main="Normal Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles") #not a straight line at the top and a bit at bottom
+MM= lm(new_c$mdist ~ new_c$pH)
+shapiro.test(MM$residuals) # p value less than 0.05 means that residuals are non-normally distributed. need to transform!
+new_c$sqrtmdist = (new_c$mdist)^(.5)
+hist(new_c$sqrtmdist)
+qqnorm(new_c$sqrtmdist, main="Sqrt Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles")
+#shapiro wilk normality:
+M = lm(new_c$sqrtmdist ~ new_c$pH)
+shapiro.test(M$residuals) #From the output, the p-value = 0.00005; STILL NOT NORMAL DIST.
+
+#plot with no transformation
+new_c$Cue[new_c$Cue == 0] = "no cue"
+new_c$Cue[new_c$Cue == 1] = "pisaster"
+new_c$Cue[new_c$Cue == 2] = "crab"
+plot(mdist ~ pH, data = new_c, bty = "n", type = "n", main = "max distance from origin", ylab = "max distance (cm)", xlab = "pH treatment")
+points(mdist ~ pH, data = new_c[new_c$Cue == "pisaster",], col = "purple", pch = 19)
+points(mdist ~ pH, data = new_c[new_c$Cue == "crab",], col = "red", pch = 19)
+points(mdist ~ pH, data = new_c[new_c$Cue == "no cue",], col = "black", pch = 19)
+legend('topleft', legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+
+##minimum distance from origin
+#look at overall distribution of data
+hist(new_c$midist) #right tail skewed; non normal distribution of data; GAMMA DISTRIBUTION
+# Make quantile plots of the response variable. A normal quantile plot visually compares the distribution of some data to a normal distribution. 
+qqnorm(new_c$midist, main="Normal Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles") #not a straight line at the top and a bit at bottom
+MM= lm(new_c$midist ~ new_c$pH)
+shapiro.test(MM$residuals) # p value less than 0.05 means that residuals are non-normally distributed. need to transform!
+new_c$sqrtmidist = (new_c$midist)^(.60)
+hist(new_c$sqrtmidist)
+qqnorm(new_c$sqrtmidist, main="Sqrt Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles")
+#shapiro wilk normality:
+M = lm(new_c$sqrtmidist ~ new_c$pH)
+shapiro.test(M$residuals) #From the output, the p-value = 0.07; now normal dist and can use family = gaussian if desired
+#plot with transformation; minimum distance from origin
+new_c$Cue[new_c$Cue == 0] = "no cue"
+new_c$Cue[new_c$Cue == 1] = "pisaster"
+new_c$Cue[new_c$Cue == 2] = "crab"
+plot(midist ~ pH, data = new_c, bty = "n", type = "n", main = "min distance from origin", ylab = "min distance (cm)", xlab = "pH treatment")
+points(midist ~ pH, data = new_c[new_c$Cue == "pisaster",], col = "purple", pch = 19)
+points(midist ~ pH, data = new_c[new_c$Cue == "crab",], col = "red", pch = 19)
+points(midist ~ pH, data = new_c[new_c$Cue == "no cue",], col = "black", pch = 19)
+legend('topleft', legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+
+#ave dist; avedis2
+#look at overall distribution of data
+hist(new_c$avedis2) #right tail skewed; non normal distribution of data; GAMMA DISTRIBUTION
+# Make quantile plots of the response variable. A normal quantile plot visually compares the distribution of some data to a normal distribution. 
+qqnorm(new_c$avedis2, main="Normal Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles") #not a straight line at the top and a bit at bottom
+NN= lm(new_c$avedis2 ~ new_c$pH * new_c$Cue)
+shapiro.test(NN$residuals) # p value less than 0.05 means that residuals are non-normally distributed. need to transform!
+z1 = ansc(new_c$avedis2, binsize = 500) #1st transformation attempt
+hist(z1)
+qqnorm(z1, main="Normal Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles")
+ZZ= lm(z1 ~ new_c$pH * new_c$Cue)
+shapiro.test(ZZ$residuals) #not normal dist.
+
+new_c$srad2 = ((z1)^2)^.4
+hist(new_c$srad2)
+
+qqnorm(new_c$srad2, main="Normal Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles")
+Z = lm(new_c$srad2 ~ new_c$pH * new_c$Cue)
+shapiro.test(Z$residuals)
+
+#plot(new_c$avedis2, avedis2.stdres, ylab="Standardized Residuals", xlab="average distance from origin") 
+#abline(0, 0)                  # the horizon
+#sqavedis2.SRes = sqrt(abs(avedis2.stdres))
+#plot(new_c$avedis2, sqavedis2.SRes, ylab="Standardized Residuals", xlab="average distance from origin") 
+#abline(0, 0) 
+
+
+#plot with no transformation
+plot(avedis2 ~ pH, data = new_c, bty = "n", type = "n",  main = "ave distance2 from origin", ylab = "ave distance2 to origin (cm)", xlab = "pH treatment")
+#points(avedis ~ pH, data = new_c[new_c$Cue == "pisaster",], col = "purple", pch = 19)
+points(avedis2 ~ pH, data = new_c[new_c$Cue == "pisaster",], col = "purple")
+#points(avedis ~ pH, data = new_c[new_c$Cue == "crab",], col = "red", pch = 19)
+points(avedis2 ~ pH, data = new_c[new_c$Cue == "crab",], col = "red")
+#points(avedis ~ pH, data = new_c[new_c$Cue == "no cue",], col = "black", pch = 19)
+points(avedis2 ~ pH, data = new_c[new_c$Cue == "no cue",], col = "black")
+legend('topright', legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+
+```
+
+average distance to the centroid from coordinate points; avdiscent
+```{r}
+#average distance to the centroid; higher numbers indicate higher variance around the new coordinate point--can use this number to figure out wandering
+#look at overall distribution of data
+hist(new_c$avdiscent) #right tail skewed; non normal distribution of data
+# Make quantile plots of the response variable. A normal quantile plot visually compares the distribution of some data to a normal distribution. 
+qqnorm(new_c$avdiscent, main="Normal Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles") #not a straight line at the top and a bit at bottom
+OO= lm(new_c$avdiscent ~ new_c$pH)
+shapiro.test(OO$residuals) # p value less than 0.05 means that residuals are non-normally distributed. need to transform!
+new_c$sqrtavdiscent = (new_c$avdiscent)^(.65)
+hist(new_c$sqrtavdiscent)
+qqnorm(new_c$sqrtavdiscent, main="Sqrt Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles")
+#shapiro wilk normality:
+O = lm(new_c$sqrtavdiscent ~ new_c$pH)
+shapiro.test(O$residuals) #From the output, the p-value < 0.05 means dis is still not normal for residuals.
+
+new_c$Cue[new_c$Cue == 0] = "no cue"
+new_c$Cue[new_c$Cue == 1] = "pisaster"
+new_c$Cue[new_c$Cue == 2] = "crab"
+#average distance to centroid:
+plot(avdiscent ~ pH, data = new_c, bty = "n", type = "n", main = "average distance to centroid")
+points(avdiscent ~ pH, data = new_c[new_c$Cue == "pisaster",], col = "purple", pch = 19)
+points(avdiscent ~ pH, data = new_c[new_c$Cue == "crab",], col = "red", pch = 19)
+points(avdiscent ~ pH, data = new_c[new_c$Cue == "no cue",], col = "black", pch = 19)
+legend(-23, 50, legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+
+```
+area of centroids by cue*pH
+```{r}
+hist(new_c$cent) #right tail skewed; non normal distribution of data
+# Make quantile plots of the response variable. A normal quantile plot visually compares the distribution of some data to a normal distribution. 
+qqnorm(new_c$cent, main="Normal Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles") #not a straight line at the top and a bit at bottom
+PP= lm(new_c$cent ~ new_c$pH)
+shapiro.test(PP$residuals) # p value less than 0.05 means that residuals are non-normally distributed. need to transform!
+new_c$sqrtcent = sqrt(new_c$cent)
+hist(new_c$sqrtcent)
+qqnorm(new_c$sqrtcent, main="Sqrt Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles")
+#shapiro wilk normality:
+p = lm(new_c$sqrtcent ~ new_c$pH)
+shapiro.test(p$residuals) #From the output, the p-value < 0.05 means dis is still not normal for residuals.
+
+plot(cent ~ pH, data = new_c, bty = "n", type = "n", main = "area of centroid")
+points(cent ~ pH, data = new_c[new_c$Cue == "pisaster",], col = "purple", pch = 19)
+points(cent ~ pH, data = new_c[new_c$Cue == "crab",], col = "red", pch = 19)
+points(cent ~ pH, data = new_c[new_c$Cue == "no cue",], col = "black", pch = 19)
+legend(-23, 50, legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+
+```
+
+plotting wandering
+```{r}
+z = ansc(new_c$wand, binsize = 70)
+hist(z)
+qqnorm(z, main="Normal Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles")
+QQ= lm(z ~ new_c$pH * new_c$Cue)
+shapiro.test(QQ$residuals) #not normal dist.
+new_c$sqrtw = (log(z))^(.2)
+hist(new_c$sqrtw)
+qqnorm(new_c$sqrtw, main="Normal Q-Q plot", xlab="Theoretical quantiles", ylab="Sample quantiles")
+Q = lm(new_c$sqrtw ~ new_c$pH * new_c$Cue)
+shapiro.test(Q$residuals)
+
+par(mfrow = c(2,2))
+new_c$Cue[new_c$Cue == 0] = "no cue"
+new_c$Cue[new_c$Cue == 1] = "pisaster"
+new_c$Cue[new_c$Cue == 2] = "crab"
+plot(wand ~ pH, data = new_c, bty = "n", type = "n", main = "wandering", ylim = c(0,8))
+
+points(wand ~ pH, data = new_c[new_c$Cue == "pisaster",], col = "purple", pch = 19)
+lines(x = c(6,8.1), y = c(1.04,1)) #line at 1; values > 0 mean high wandering, < 0 low wandering
+lines(x = c(6,8.1), y = c())
+points(wand ~ pH, data = new_c[new_c$Cue == "crab",], col = "red", pch = 19)
+lines(x = c(6,8.1), y = c(1,1)) #line at 1; values > 0 mean high wandering, < 0 low wandering
+points(wand ~ pH, data = new_c[new_c$Cue == "no cue",], col = "black", pch = 19)
+lines(x = c(6,8.1), y = c(1,1)) #line at 1; values > 0 mean high wandering, < 0 low wandering
+legend(-23, 50, legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+```
+
+random lms for max and ave distance from origin using transformed data. NONE OF THE LMS ARE WORKING CORRECTLY/TRANSFORMING THE DATA CORRECTLY
+```{r}
+new_c$Cue[new_c$Cue == 0] = "no cue"
+new_c$Cue[new_c$Cue == 1] = "pisaster"
+new_c$Cue[new_c$Cue == 2] = "crab"
+
+#ave dis from origin- 
+lm1 = lm(srad2 ~ pH * Cue, data = new_c)
+summary(lm1)
+lm1.em = emtrends(lm1, ~Cue, var = "pH")
+summary(lm1.em)
+contrast(lm1.em, method = 'tukey')
+#slopes: 
+
+#max dis
+str(new_c)
+new_c$sqrtmdist ~ new_c$pH
+lm2 = lm(sqrtmdist ~ pH * Cue, data = new_c)
+AIC(lm2)
+summary(lm2)
+lm2.em = emtrends(lm2, ~Cue, var = "pH")
+summary(lm2.em)
+contrast(lm2.em, method = 'tukey')
+#slopes:
+###looking to see if the residuals fit a normal distribution from the model : plot(simulateResiduals(lm2))
+
+#min dis from origin: DONE WITH THIS MODEL ON 11/12/19
+new_c$sqrtmidist ~ new_c$pH
+lmA=lm(sqrtmidist ~ pH * Cue, data = new_c)
+summary(lmA)
+lmA.em = emtrends(lmA, ~Cue, var = "pH")
+summary(lmA.em)
+contrast(lmA.em, method = 'tukey')
+
+#dispersion metric--ave dist to centroid: DONE WITH THIS MODEL ON 11/12/19
+new_c$sqrtavdiscent ~ new_c$pH
+lmB = lm(sqrtavdiscent ~ pH * Cue, data = new_c)
+summary(lmB)
+lmB.em = emtrends(lmB, ~Cue, var = "pH")
+summary(lmB.em)
+contrast(lmB.em, method = 'tukey')
+
+View(new_c)
+#wandering metric
+Q = lm(sqrtw ~ pH * Cue, data = new_c)
+summary(Q)
+lmC.em = emtrends(Q, ~Cue, var = "pH")
+summary(lmC.em)
+contrast(lmC.em, method = 'tukey')
+
+
+```
+
+digging into timestamps and movement patterns...
+```{r}
+#1. timestamp 5 min displacement distance by cue type
+par(mfrow = c(2,2))
+plot(dist ~ pH_ave, data = d, bty = "n", type = "n", main = "displacement distance within 5min")
+points(dist ~ pH_ave, data = d[d$cue == "pisaster",], col = "purple", pch = 19)
+points(dist ~ pH_ave, data = d[d$cue == "crab",], col = "red", pch = 19)
+points(dist ~ pH_ave, data = d[d$cue == "no cue",], col = "black", pch = 19)
+
+lm.d = lm(dist~pH_ave * cue, data = d)
+summary(lm.d)
+d.em = emtrends(lm.d, ~cue, var = "pH_ave")
+summary(d.em)
+contrast(d.em, method = 'tukey')
+
+#2. timestamps greater than 30 min displacement distance by cue type
+par(mfrow = c(2,2))
+plot(dist ~ pH_ave, data = e, bty = "n", type = "n", main = "displacement distance after 30min")
+points(dist ~ pH_ave, data = e[e$cue == "pisaster",], col = "purple", pch = 19)
+points(dist ~ pH_ave, data = e[e$cue == "crab",], col = "red", pch = 19)
+points(dist ~ pH_ave, data = e[e$cue == "no cue",], col = "black", pch = 19)
+
+lm.e = lm(dist~pH_ave * cue, data = e)
+summary(lm.e)
+e.em = emtrends(lm.e, ~cue, var = "pH_ave")
+summary(e.em)
+contrast(e.em, method = 'tukey')
+
+#3. 
+
+
+
+
+```
+Websites used for transformations!
+https://rcompanion.org/handbook/I_12.html
+https://www.itl.nist.gov/div898/handbook/pmd/section4/pmd453.htm
+https://www.rdocumentation.org/packages/binhf/versions/1.0-3/topics/ansc
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+df, glmer, plot with only ambient values for slopes OLD DONT USE--PRE PH CALCS
+```{r}
+amb = new_in_out
+amb = data.frame(amb)
+amb = amb[amb$pH >= 12.5 & amb$Cue != "conspecific",]
+glmer_amb = glmer(cbind(Out, In) ~ Cue + (1|trial) + (1|ind), data = amb, family = binomial)
+summary(glmer_amb)
+amb2 = emmeans(glmer_amb, ~ Cue)
+summary(amb2)
+contrast(amb2, method = 'tukey')
+
+#plot
+with(amb, boxplot(prop_out ~ Cue))
+```
+
+glmer for slopes OLD DONT USE--PRE PH CALCS
+```{r}
+new_in_out = new_in_out[new_in_out$Cue != "conspecific",]
+glmer_in_out = glmer(cbind(Out, In) ~ pH * Cue + (1|trial) + (1|ind) , data = new_in_out, family = binomial)
+summary(glmer_in_out)
+
+g2 = emtrends(glmer_in_out, ~ Cue, var = "pH")
+summary(g2)
+contrast(g2, method = 'tukey')
+#slope between crab and pisaster are sig diff (p = .02) but slope between crab-no cue and pis-no cue are not sig diff
+with(new_in_out, boxplot(prop_out ~ pH * Cue))
+```
+
+prediction lines for models-PRE PH CALCS
+```{r}
+new_in_out.x = expand.grid(pH = seq(from = 1, to = 15, by = 0.5), Cue = c('pisaster', 'no cue', 'crab'), Out = 0, In = 0)
+mm = model.matrix(terms(glmer_in_out), new_in_out.x)
+new_in_out.x$Out = plogis(mm%*%fixef(glmer_in_out))
+View(new_in_out.x)
+####Because this is a logistic regression, I would use plogis(mm%*%fixef(glmer_in_out)) to get proportion
+```
+
+visualizing the data along with predicted lines PRE PH CALCS
+```{r}
+dumb = aggregate(new_in_out$prop_out, by = list(new_in_out$pH, new_in_out$Cue), FUN = mean)
+View(dumb)
+with(new_in_out.x, plot(Out ~ pH))
+points(x ~ Group.1, data = dumb[dumb$Group.2 == 'pisaster',], col = "orchid4", pch = 16)
+points(x ~ Group.1, data = dumb[dumb$Group.2 == 'no cue',], col = "black", pch = 16)
+points(x ~ Group.1, data = dumb[dumb$Group.2 == 'crab',], col = "cyan", pch = 16)
+
+```
+
+THIS IS FOR THE IN_OUT2 COLUMN not helpful
+creating new dataframe with summaries of in/out for glmer...kristen's help...
+```{r}
+#rename c and nc to numbers for new dataframe...because we are using mean function
+in_out$treatment[in_out$treatment == "no cue"] = 0
+in_out$treatment[in_out$treatment == "pisaster"] = 1
+in_out$treatment[in_out$treatment == "crab"] = 2
+in_out$treatment[in_out$treatment == "conspecific"] = 3
+in_out$treatment = as.numeric(in_out$treatment)
+unique(in_out$treatment) #tells me all of the values
+
+in_out$Trial[in_out$Trial == "1_gA"] = 1
+in_out$Trial[in_out$Trial == "2_gB"] = 2
+in_out$Trial[in_out$Trial == "3_gC"] = 3
+in_out$Trial[in_out$Trial == "4_gD"] = 4
+in_out$Trial[in_out$Trial == "5_gE"] = 5
+in_out$Trial[in_out$Trial == "6_gF"] = 6
+in_out$Trial[in_out$Trial == "7_gG"] = 7
+in_out$Trial[in_out$Trial == "8_gH"] = 8
+in_out$Trial[in_out$Trial == "9_gI"] = 9
+in_out$Trial[in_out$Trial == "10_gJ"] = 10
+in_out$ind = as.factor(in_out$ind)
+new_in_out2 = in_out %>% group_by(ind) %>% dplyr::summarise(trial = mean(as.numeric(Trial)), bin = mean(Bin), pH = mean(pH_corrected), Cue = mean(treatment), prop_in = sum(in_out2)/n(), In = sum(in_out2), Total = length(ind), Out = Total - In, prop_out = 1- prop_in)
+View(new_in_out2)
+#dplyr:: tells the function from which package to draw from
+#name = formula(name) is a way to create a new column in the dataframe using a 
+#function applied to the old dataframe
+
+new_in_out2$Cue[new_in_out2$Cue == "0"] = "no cue"
+new_in_out2$Cue[new_in_out2$Cue == "1"] = "pisaster"
+new_in_out2$Cue[new_in_out2$Cue == "2"] = "crab"
+new_in_out2$Cue[new_in_out2$Cue == "3"] = "conspecific"
+#replace numbers with lettered codes in new dataframe
+```
+
+df, glmer, plot with only ambient values COLUMN2 for slopes
+```{r}
+Amb = new_in_out2
+Amb = data.frame(Amb)
+Amb = Amb[Amb$pH >= 12.5 & Amb$Cue != "conspecific",]
+glmer_Amb = glmer(cbind(Out, In) ~ Cue + (1|trial) + (1|ind), data = Amb, family = binomial)
+summary(glmer_Amb)
+Amb2 = emmeans(glmer_Amb, ~ Cue)
+summary(Amb2)
+contrast(Amb2, method = 'tukey')
+
+#plot
+with(Amb, boxplot(prop_out ~ Cue))
+```
+
+glmer COLUMN2 for slopes
+```{r}
+new_in_out2 = new_in_out2[new_in_out2$Cue != "conspecific",]
+glmer_in_out2 = glmer(cbind(Out, In) ~ pH * Cue + (1|trial) + (1|ind) , data = new_in_out2, family = binomial)
+summary(glmer_in_out2)
+
+g22 = emtrends(glmer_in_out2, ~ Cue, var = "pH")
+summary(g22)
+contrast(g22, method = 'tukey')
+#slope between crab and pisaster are sig diff (p = .02) but slope between crab-no cue and pis-no cue are not sig diff
+with(new_in_out2, boxplot(prop_out ~ pH * Cue))
+```
+
+
+
+
+
+DONT USE. NEW DF of in_out based on true pH values now. make a new dataframe to reorder the group/acc tanks and then can call on a column and put it in the new_in_out df as a column to plot by. ***new df to use for analysis is called n_in_out1
+```{r}
+n_in_out1 = new_in_out
+View(n_in_out1)
+n_in_out1 = n_in_out1[order(n_in_out1$accGroup, n_in_out1$accBin),]
+ave2 = ave1
+ave2 <- ave2[order(ave2$group, ave2$tank),]
+View(ave2)
+duptimes = 3 # How many replicates you want of each row
+idx = rep(1:nrow(ave2), duptimes) # Create an index of the rows you want with duplications
+dupave2 = ave2[idx,] # Use that index to genderate your new data frame
+View(dupave2)
+dupave2 <- dupave2[order(dupave2$group, dupave2$tank),] #reorganize new df such that the order matches in both dfs
+n_in_out1$corrpH = dupave2$corr_pH #replace pH values with those corrected for
+View(n_in_out1)
+```
+
+```{r}
+#generate three curves; we did this to run estimates with bootstrapping to see which experimental design sampling size would hinder the experiment least
+
+library(lme4)
+library(emmeans)
+d.fin=rep(20, 1000)
+for(i in 1:length(d.fin) ){
+  
+x = c(6.49, 6.73, 7.07, 7.32, 7.56, 7.8, 8.08)
+sde=5
+
+
+y.consp.out=NULL
+for(j in 1:5){
+y.consp = 3.22*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size)
+
+y.consp.out.sub = round(plogis(y.consp) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.consp.out=c(y.consp.out, y.consp.out.sub)
+}
+
+#can now do this for pisaster and cancer crab
+y.crab.out=NULL
+for(k in 1:5){
+y.crab = 3.59*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size)
+y.crab.out.sub = round(plogis(y.crab) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.crab.out=c(y.crab.out, y.crab.out.sub)
+}
+
+#Pisaster
+y.pis.out=NULL
+for(l in 1:5){
+y.pis = 2.75*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size) 
+y.pis.out.sub = round(plogis(y.pis) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.pis.out=c(y.pis.out, y.pis.out.sub)
+}
+
+Out=c(y.consp.out, y.crab.out, y.pis.out)
+In=8-Out
+Cue=c(rep('Control',length(y.consp.out)), rep('Crab', length(y.crab.out)), rep('Pisaster', length(y.pis.out)))
+pH=rep(x, 5*3)
+
+d1=data.frame(Out, In, Cue, pH)
+d1$Ranef=seq(from =1, to =nrow(d1), by=1)
+d1.glmer=glm(cbind(Out,In)~pH*Cue, family=binomial, data=d1)
+summary(d1.glmer)
+d1.em=contrast(emmeans(d1.glmer,~'Cue', var='pH'), method='tukey')
+d1.em=data.frame(d1.em)
+d1.em$p.value
+d.fin[i]=d1.em$p.value[1]
+plot(Out/(Out+In)~pH, xlab=paste(i))
+}
+
+length(d.fin[d.fin<0.05])
+
+#######Manipulate sample size
+d.fin=rep(20, 1000)
+for(i in 1:length(d.fin) ){
+  
+x = c(6.49, 6.73, 7.07, 7.32, 7.56, 7.8, 8.08)
+sde=5
+
+y.consp.out=NULL
+for(j in 1:5){
+y.consp = 3.22*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size)
+
+y.consp.out.sub = round(plogis(y.consp) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.consp.out=c(y.consp.out, y.consp.out.sub)
+}
+
+#can now do this for pisaster and cancer crab
+y.crab.out=NULL
+for(k in 1:7){
+y.crab = 3.59*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size)
+y.crab.out.sub = round(plogis(y.crab) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.crab.out=c(y.crab.out, y.crab.out.sub)
+}
+
+#Pisaster
+y.pis.out=NULL
+for(l in 1:3){
+y.pis = 2.75*x + -22 + rnorm(length(x),0,sde) #rnorm(mean, SD, sample size) 
+y.pis.out.sub = round(plogis(y.pis) * 8) #add in the fact that I have 8 time stamps; round to nearest whole value
+y.pis.out=c(y.pis.out, y.pis.out.sub)
+}
+
+Out=c(y.consp.out, y.crab.out, y.pis.out)
+In=8-Out
+Cue=c(rep('Control',length(y.consp.out)), rep('Crab', length(y.crab.out)), rep('Pisaster', length(y.pis.out)))
+pH=rep(x, 5*3)
+
+d1=data.frame(Out, In, Cue, pH)
+d1$Ranef=seq(from =1, to =nrow(d1), by=1)
+d1.glmer=glm(cbind(Out,In)~pH*Cue, family=binomial, data=d1)
+summary(d1.glmer)
+d1.em=contrast(emmeans(d1.glmer,~'Cue', var='pH'), method='tukey')
+d1.em=data.frame(d1.em)
+d1.em$p.value
+d.fin[i]=d1.em$p.value[1]
+plot(Out/(Out+In)~pH, xlab=paste(i))
+}
+length(d.fin[d.fin<0.05])
+
+```
+
+
+
+
+
+
+
+
+
