@@ -1,0 +1,528 @@
+Created 03 March 2021
+
+Last edit: 03 March 2021
+To do: 
+-03/03; need to check tfave dataset and make sure all pH values are included.
+-03/03; need to go back check that I did GLMM correctly for in/out
+-03/03; need to check how to plot lines of lm on max.dist plot
+
+Set Up; loading in R packages that you will need + setting working directory
+```{r}
+library(nlme)
+library(lme4)
+library(emmeans)
+library(MuMIn)
+library(dplyr) #create new dataframe
+library(tidyr) #create new dataframe
+#library(jtools)
+library(readxl) #read in excel files
+library(fitdistrplus) #helps pick distribution of data with descdist() argument
+library(glmmML) #for choosing which model to start with
+getwd()
+setwd("/Users/alishamsaley/Documents/GitHub/TF_CP3/")
+```
+
+Read in the dataset--data exploration
+```{r}
+#load dataset
+#tfave <- read_xlsx('/Users/alishamsaley/Documents/GitHub/TF_CP3/pH averages.xlsx')
+data = as.data.frame(read_xlsx('/Users/alishamsaley/Documents/GitHub/TF_CP3/FullData_corrected.xlsx'))
+data$treatment[data$treatment == "carb"] = "crab"
+unique(data$treatment)
+data$pH_round = round(x = data$pH_ave, digits = 2)
+#taking out innapropriate individuals based on notes.
+data = data[data$ind != 7 & data$ind != 192 & data$ind != 193 & data$ind != 194 & data$ind != 195 & data$ind != 39 & data$ind != 50 & data$ind != 67 & data$ind != 148 & data$ind != 205 & data$ind != 37 & data$ind != 79 & data$ind != 18 & data$ind != 188 & data$ind != 138 & data$ind != 140 & data$ind != 225 & data$ind != 128 & data$ind != 186 & data$ind != 17,] #ind 186 and 17 are maybes
+View(data)
+
+#check structure and variable types
+str(data) #structure of the dataset
+head(data) #shows the first few lines of the dataframe
+tail(data) #shows the tail end of the datafram
+
+#creating new dataframe by just individual for location summaries: called d1
+#rename c and nc to numbers for new dataframe...because we are using mean function
+data$treatment[data$treatment == "no cue"] = 0
+  data$treatment[data$treatment == "pisaster" ] = 1 
+  data$treatment[data$treatment == "crab"] = 2
+  data$treatment = as.numeric(data$treatment)
+data$ind = as.factor(data$ind)
+
+d1 = as.data.frame(data%>% group_by(ind) %>% dplyr::summarise(trial = mean(Trial_main), arena = mean(bin), accbin = mean(acclim), pH = mean(pH_round), cue = mean(treatment), P_in1 = sum(in_out)/n(), P_in2 = sum(in_out2)/n(), In1 = sum(in_out), In2 = sum(in_out2), Total = length(ind), Out1 = Total - In1, Out2 = Total - In2, P_out1 = 1-P_in1, P_out2 = 1-P_in2, Corner = sum(corner), Not_cor = Total - Corner, Wall = sum(wall), Not_wall = Total - Wall, Bottom = sum(bottom), Not_bot = Total - Bottom, P_cor = sum(corner)/Total, P_wall = sum(wall)/Total, P_bot = sum(Bottom)/Total))
+
+d1$cue[d1$cue == "0"] = "no cue"
+  d1$cue[d1$cue == "1"] = "pisaster"
+  d1$cue[d1$cue == "2"] = "crab"
+  
+  #change any variable classes needed (ex: integer --> factor)
+d1$trial = as.factor(d1$trial)
+d1$accbin = as.factor(d1$accbin)
+d1$cue = as.factor(d1$cue)
+str(data)
+```
+calculating ave pH by tank; NEED TO ADD IN THE PH VALUES FROM CP2 (03/03)
+```{r}
+SE = function(x) { SE = sd(x)/sqrt(length(x))
+return(SE)}
+se = aggregate(tfave$`corrected pH`, by = list(tfave$Tank, tfave$Group), FUN = SE)
+View(se)
+ave = aggregate(tfave$`corrected pH`, by = list(tfave$Tank, tfave$Group), FUN = mean)
+names(ave) = c("tank", "group", "corr_pH")
+View(ave)
+# write.csv(ave, "ave pH.csv", row.names = F) write csv
+ave$indiv = 1:nrow(ave) # make new column with values for "individuals"
+  
+ave$SE = se$x
+ave$xplus = ave$corr_pH + ave$SE
+ave$xminus = ave$corr_pH - ave$SE
+
+###trying to see if I can reorder by ascending pH values and reapply the individual ordering for a cleaner pH plot
+#used this df for plotting below
+ave1 = ave
+View(ave1)
+ave1 <- ave1[order(ave1$corr_pH),]  #reordering dataframe from smallest pH to largest
+ave1$indiv = 1:nrow(ave1) #giving each row a new number
+
+
+```
+
+###############################
+IN AND OUT RESPONSE!
+###############################
+DATA EXPLORATION; 
+```{r}
+# histograms of response variable(s); look for gaussian distribution
+hist(d1$P_out1) #count data; not normally distributed at all! need to transform
+hist(d1$P_out2) #count data; not normally distributed at all! need to transform or use logit space in glmer
+
+# histograms of predictor(s); look for gaussian distribution
+hist(d1$pH) #looks pretty good
+
+# dotcharts
+dotchart(d1$P_out1, col = as.factor(d1$cue)) #dotchart(data$response); can color by random effects/clusters
+dotchart(d1$P_out2, col = as.factor(d1$cue)) #dotchart(data$response); can color by random effects/clusters
+dotchart(d1$pH) #dotchart(data$predictor); can color by random effects/clusters...should be an even spread so that you can parse out different between grouping and predictors
+
+# relationship between predictor(s); looking for collinearity patterns?
+plot(d1$pH ~ d1$cue)
+# plot response by each predictor and look at spread of data
+plot(d1$P_out1 ~ d1$pH)
+plot(d1$P_out1 ~ d1$cue)
+plot(d1$P_out2 ~ d1$pH)
+plot(d1$P_out2 ~ d1$cue)
+```
+BUILDING YOUR MODEL; checking assumptions
+source: http://bbolker.github.io/mixedmodels-misc/glmmFAQ.html#model-definition
+```{r}
+#start with the 'fullest' model you can think of. you will work back from there.
+#testing out three different models and using AIC score to decide which to use moving forward
+mod.full.glmer = glmer(cbind(Out2, In2) ~ cue * pH + (1|ind)+ (1|accbin), data = d1, family = binomial,control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+mod.full.glmmpql <- glmmPQL(cbind(Out2,In2) ~ cue * pH, random = ~1|ind, family = binomial, data = d1)
+mod.full.glmmML <- glmmML(cbind(Out2,In2) ~ cue * pH, cluster = ind, family= binomial, data = d1)
+summary(mod.full.glmer) #AIC 618.4
+summary(mod.full.glmmpql) #AIC not given
+summary(mod.full.glmmML) #AIC better than glmer but did not correct for overdispersed data.
+
+#the fullest model
+mod.full = glmer(cbind(Out2, In2) ~ cue * pH + (1|ind)+ (1|accbin), data = d1, family = binomial,control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+
+#mod.full <- lme(Richness~NAP*fExposure, random=~1|Beach, data=rikz) 
+
+#Validate your model assumptions
+# 1) Normality of errors --> look for normal distribution of residuals (least important); to fix = transform data
+# 2) Independence of errors --> look for clusters (bad) of data by "ID" in graph; to fix = add random effects
+# 3) Linearity and Additivity --> look for linear relationship in data (most important); to fix = add relevant predictors OR log trans OR move to non-linear model
+# 4) Variance homogeneity --> look for even spread of residuals across levels of predictors; to fix = add relevant predictors OR sqrt trans OR add weights to model
+# 5) Biologically Valid Model
+
+#PLOTS TO CHECK MODEL ASSUMPTIONS:
+
+#Standardized Residuals versus Fitted Values: look at spread of data for evenness 'starry night'. points are centered around zero w/ no obvious pattern
+    #potential assumptions violated: homogeneity of variance (variance is not similar across fitted values), linearity and additivity (areas where resid are either all + or all -)
+plot(mod.full)
+
+# QQ Plot: look for datapoints falling along QQ line
+    #potential assumptions violated: Normality (if data fall heavily off of QQ line)
+    #can also use hist(resid(model)) to check for even distribution
+qqnorm(resid(mod.full)) #checks normality of the residuals
+qqline(resid(mod.full)) #adds line
+hist(resid(mod.full)) #a normal distribution of residuals
+
+#Plotting residuals versus predictor(s): look for even spread across levels
+    #potential assumptions violated: variance homogeneity; for boxplots, data should be centered around 0 with boxes no more than 4x the size of another...for continuous, data should be a starry night
+plot(resid(mod.full)~ d1$pH) #need to adjust variance weights. looks like very low variance at low pH and increases with X
+plot(resid(mod.full)~ d1$cue) #no cue has low variance, but it is expected and should be okay for now.
+
+```
+TRANSFORM DATA; and recheck model assumptions.
+```{r}
+```
+DETERMINE RANDOM STRUCTURE; start with full model and drop each RE separately to see the significance of each (report the intercept and residual values in ms) USE REML METHOD (default)
+```{r}
+#copy fullest model from above after transformations
+mod.full <- glmer(cbind(Out2, In2) ~ cue * pH + (1|ind)+ (1|accbin), data = d1, family = binomial,control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+  summary(mod.full)
+  
+
+#Test the significance of random effects (ie; test how much variance is accounted for by REs)
+mod.accbin <- glmer(cbind(Out2, In2) ~ cue * pH + (1|ind), data = d1, family = binomial,control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+anova(mod.full, mod.accbin) #AIC does not improve with accbin and p value = 0.26; can drop accbin from model
+mod.ind <- glmer(cbind(Out2, In2) ~ cue * pH + (1|accbin), data = d1, family = binomial,control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+anova(mod.full, mod.ind) #AIC improves with ind and p value < 0.05 ; keep ind
+
+#runs Log Likelihood Ratio test to test effect of random effect in model; if p value is low, that means the random effect significantly improves the model fit and you should keep it.
+```
+DETERMINE FIXED STRUCTURE; start with full model and drop each FE separately to see the significance of each () USE ML METHOD (not default)
+```{r}
+#copy fullest model from above after determining random structure
+mod.full <- glmer(cbind(Out2, In2) ~ cue * pH + (1|ind), data = d1, family = binomial,control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+#mod.full <- lme(sqrt(Richness)~NAP*fExposure, method="ML", random=~1|Beach,data=rikz)
+
+#model removing interaction
+mod.inter <- glmer(cbind(Out2, In2) ~ cue + pH + (1|ind), data = d1, family = binomial,control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+anova(mod.full, mod.inter) #does not show an interaction between pH and Cue. drop the interaction; this means that the SHAPE of the curves are not significantly different; ie, the way that cue interacts across pH on behavior is conserved.
+
+mod.full.new <- glmer(cbind(Out2, In2) ~ cue + pH + (1|ind), data = d1, family = binomial,control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+
+#model removing pH fixed effect
+mod.pH <- glmer(cbind(Out2, In2) ~ cue + (1|ind), data = d1, family = binomial,control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+
+#model removing cue fixed effect
+mod.cue <- glmer(cbind(Out2, In2) ~ pH + (1|ind), data = d1, family = binomial,control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+
+#compare the models
+anova(mod.full.new,mod.pH) #pH improves model with AIC and p value <0.05
+anova(mod.full.new,mod.cue) #cue improves model with AIC and p value < 0.05
+
+```
+RUN THE FINAL MODEL; recheck assumptions
+```{r}
+#Now we run the final model; put back in REML
+mod.final <- glmer(cbind(Out2, In2) ~ cue + pH + (1|ind), data = d1, family = binomial,control=glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+
+## Validate model assumptions
+plot(mod.final)
+#Check for normality
+qqnorm(resid(mod.final))
+qqline(resid(mod.final))
+## plotting residuals vs. fitted and vs. predictors
+plot(resid(mod.final))
+plot(resid(mod.final)~d1$pH)
+#plot(resid(mod.final)~owls$ArrivalTime)
+
+summary(mod.final) 
+trend1 = emmeans(mod.final, ~cue, var = "pH")
+summary(trend1)
+contrast(trend1, method = 'tukey')
+#Need to run this final model with REML to get values for the final table! Keep fixed effect- value, std. error, df, t-vaule from this output table & keep random effect- intercept, residual for the final table
+
+#testing the significance of the random effect by deleting it and running it with REML test. #test here gets us the values to report; L. Ratio= & p-value= 
+
+#testing the significance of the fixed effect by deleting it and running it with ML test. #test here gets us the values to report; L. Ratio= & p-value= 
+
+
+#What to pull out for summary table and from where?
+# 1) parameter est, std. error, df (summary (mod.final))
+# 2) Random effect intercept (var in B0 across RE leve) and residual value (var w/in RE level) (summary(mod.final)); don't forget that values are in SD and that you need to square them for variance.
+# 3) p value for fixed effects (p value from model comparison summaries (anova(mod.final, mod.X)))
+# 4) LLR for fixed effects(LLR from model comparison summaries (anova(mod.final, mod.X)); if interaction is sig, only report this.)
+
+```
+
+USING FINAL MODEL TO PLOT PREDICTED LOG CURVE;
+```{r}
+#prediction values from the glmer
+d1.1 = expand.grid(pH = seq(from = 6.5, to = 8.0, by = 0.05), cue = c('crab', 'no cue', 'pisaster'), Out2 = 0, In2 = 0)
+mm1 = model.matrix(terms(mod.final), d1.1)
+d1.1$out = mm1%*%fixef(mod.final)
+#95CI around models; error bars
+pvar1 = diag(mm1%*%tcrossprod(vcov(mod.final), mm1))
+cmult = 1.96
+newdat1 = data.frame(d1.1, plo = d1.1$out - cmult * sqrt(pvar1), phi = d1.1$out + cmult * sqrt(pvar1))
+
+plot(plogis(out) ~ pH, ylim = c(0,1), xlim = c(6.5,8.0), data = d1.1, bty = "n", type = "n", ylab = "Proportion of time Out", xlab = "pH (Total scale)")
+CrCI = newdat1[newdat1$cue == "crab",]
+PCI = newdat1[newdat1$cue == "pisaster",]
+NoCI = newdat1[newdat1$cue == "no cue",]
+
+polygon(c(CrCI$pH,rev(CrCI$pH)),c(plogis(CrCI$plo),rev(plogis(CrCI$phi))),col="light pink", border = NA)
+polygon(c(PCI$pH,rev(PCI$pH)),c(plogis(PCI$plo),rev(plogis(PCI$phi))),col="thistle", border = NA)
+polygon(c(NoCI$pH,rev(NoCI$pH)),c(plogis(NoCI$plo),rev(plogis(NoCI$phi))),col="grey85", border = NA)
+
+points(plogis(out) ~ pH, data = d1.1[d1.1$cue == 'pisaster',], col = "orchid4", pch = 16)
+points(plogis(out) ~ pH, data = d1.1[d1.1$cue == 'crab',], col = "red", pch = 16)
+points(plogis(out) ~ pH, data = d1.1[d1.1$cue == 'no cue',], col = "black", pch = 16)
+
+lines(plogis(plo)~pH, data = newdat1[newdat1$cue == "crab",], col = "red", lty = 4, lwd = 2)
+lines(plogis(phi)~pH, data = newdat1[newdat1$cue == "crab",], col = "red", lty = 4, lwd = 2)
+lines(plogis(plo)~pH, data = newdat1[newdat1$cue == "pisaster",], col = "orchid4", lty = 4, lwd = 2)
+lines(plogis(phi)~pH, data = newdat1[newdat1$cue == "pisaster",], col = "orchid4", lty = 4, lwd = 2)
+lines(plogis(plo)~pH, data = newdat1[newdat1$cue == "no cue",], col = "black", lty = 4, lwd = 2)
+lines(plogis(phi)~pH, data = newdat1[newdat1$cue == "no cue",], col = "black", lty = 4, lwd = 2)
+```
+
+###############################
+BOOTSTRAPPING FOR SPECIFIC VALUES ON GRAPH
+###############################
+
+###############################
+COORDINATE TRACKING
+###############################
+Read in the dataset--data exploration
+```{r}
+d3 = data%>% group_by(ind) %>% dplyr::summarise(accbin = mean(acclim), pH = mean(pH_round), cue = mean(treatment), avX = mean(FX), avY = mean(FY), max.dist = max(dist_filt), min.dist = min(dist_filt), mean.dis = mean(dist_filt), ave.dis = sqrt((avX^2) + (avY^2)), trial = mean (Trial_main), ave.dis.cent = (sum(sqrt((FX-avX)^2 + (FY-avY)^2)))/(length(ind)), wand = ave.dis.cent/(sqrt(avX^2 + avY^2)))
+d3$cent = pi*(data3$ave.dis.cent)^2
+d3$cue[d3$cue == "0"] = "no cue"
+  d3$cue[d3$cue == "1"] = "pisaster"
+  d3$cue[d3$cue == "2"] = "crab"
+  #change any variable classes needed (ex: integer --> factor)
+str(d3)
+d3$accbin = as.factor(d3$accbin)
+d3$cue = as.factor(d3$cue)
+d3$trial = as.factor(d3$trial)
+```
+DATA EXPLORATION
+```{r}
+# histograms of response variable(s); look for gaussian distribution
+hist(d3$max.dist) #ok
+hist(sqrt(d3$min.dist))#need to transform to sq rt
+hist(sqrt(d3$mean.dis)) #need to transform to sq rt
+hist(sqrt(d3$ave.dis)) #need to transform to sq rt
+hist(sqrt(d3$ave.dis.cent))#need to transform to sq rt
+hist(log(d3$wand)) #need to transform to log
+hist(log(d3$cent)) #need to transform to log
+
+# histograms of predictor(s); look for gaussian distribution
+hist(d3$pH) #looks pretty good
+
+# dotcharts
+
+dotchart(d3$max.dist, col = as.factor(d3$cue)) #ok
+dotchart(sqrt(d3$min.dist), col = as.factor(d3$cue))#need to transform to sq rt
+dotchart(sqrt(d3$mean.dis), col = as.factor(d3$cue)) #need to transform to sq rt
+dotchart(sqrt(d3$ave.dis), col = as.factor(d3$cue)) #need to transform to sq rt
+dotchart(sqrt(d3$ave.dis.cent), col = as.factor(d3$cue))#need to transform to sq rt
+dotchart(log(d3$wand), col = as.factor(d3$cue)) #need to transform to log
+dotchart(log(d3$cent), col = as.factor(d3$cue)) #need to transform to log
+
+# relationship between predictor(s); looking for collinearity patterns?
+plot(d3$pH ~ d3$cue)
+# plot response by each predictor and look at spread of data
+plot(d3$max.dist ~ d3$pH, col = as.factor(d3$cue), pch = 19) #looks like variance increases with pH
+plot(sqrt(d3$min.dist) ~ d3$pH, col = as.factor(d3$cue), pch = 19)
+plot(sqrt(d3$mean.dis) ~ d3$pH, col = as.factor(d3$cue), pch = 19)
+plot(sqrt(d3$ave.dis) ~ d3$pH, col = as.factor(d3$cue), pch = 19)
+plot(sqrt(d3$ave.dis.cent) ~ d3$pH, col = as.factor(d3$cue), pch = 19)
+plot(log(d3$wand) ~ d3$pH, col = as.factor(d3$cue), pch = 19)
+plot(log(d3$cent) ~ d3$pH, col = as.factor(d3$cue), pch = 19)
+
+plot(d3$max.dist ~ d3$cue) #higher variance in pisaster cue
+plot(sqrt(d3$min.dist) ~ d3$cue)
+plot(sqrt(d3$mean.dis) ~ d3$cue)
+plot(sqrt(d3$ave.dis) ~ d3$cue)
+plot(sqrt(d3$ave.dis.cent) ~ d3$cue)
+plot(log(d3$wand) ~ d3$cue)
+plot(log(d3$cent) ~ d3$cue)
+```
+BUILDING YOUR MODEL; checking assumptions
+```{r}
+#start with the 'fullest' model you can think of. you will work back from there.
+mod.full = lme(max.dist ~ pH + cue + pH:cue, random = ~1|accbin/ind, data = d3, method = "REML", weights = varFixed(~pH))
+  summary(mod.full)
+#mod.full <- lme(Richness~NAP*fExposure, random=~1|Beach, data=rikz) 
+
+#Validate your model assumptions
+# 1) Normality of errors --> look for normal distribution of residuals (least important); to fix = transform data
+# 2) Independence of errors --> look for clusters (bad) of data by "ID" in graph; to fix = add random effects
+# 3) Linearity and Additivity --> look for linear relationship in data (most important); to fix = add relevant predictors OR log trans OR move to non-linear model
+# 4) Variance homogeneity --> look for even spread of residuals across levels of predictors; to fix = add relevant predictors OR sqrt trans OR add weights to model
+# 5) Biologically Valid Model
+
+#PLOTS TO CHECK MODEL ASSUMPTIONS:
+
+#Standardized Residuals versus Fitted Values: look at spread of data for evenness 'starry night'. points are centered around zero w/ no obvious pattern
+    #potential assumptions violated: homogeneity of variance (variance is not similar across fitted values), linearity and additivity (areas where resid are either all + or all -)
+plot(mod.full)
+
+# QQ Plot: look for datapoints falling along QQ line
+    #potential assumptions violated: Normality (if data fall heavily off of QQ line)
+    #can also use hist(resid(model)) to check for even distribution
+qqnorm(resid(mod.full)) #checks normality of the residuals
+qqline(resid(mod.full)) #adds line
+hist(resid(mod.full)) #a normal distribution of residuals
+
+#Plotting residuals versus predictor(s): look for even spread across levels
+    #potential assumptions violated: variance homogeneity; for boxplots, data should be centered around 0 with boxes no more than 4x the size of another...for continuous, data should be a starry night
+plot(resid(mod.full)~ d1$pH) #need to adjust variance weights. looks like very low variance at low pH and increases with X
+plot(resid(mod.full)~ d1$cue) #no cue has low variance, but it is expected and should be okay for now.
+
+```
+DETERMINE RANDOM STRUCTURE; start with full model and drop each RE separately to see the significance of each (report the intercept and residual values in ms) USE REML METHOD (default)
+```{r}
+#copy fullest model from above after transformations
+mod.full = lme(max.dist ~ pH + cue + pH:cue, random = ~1|accbin/ind, data = d3, method = "REML", weights = varFixed(~pH))
+  summary(mod.full)
+  
+#Test the significance of random effects (ie; test how much variance is accounted for by REs)
+mod.ind = lme(max.dist ~ pH + cue + pH:cue, random = ~1|accbin, data = d3, method = "REML", weights = varFixed(~pH))
+mod.accbin = lme(max.dist ~ pH + cue + pH:cue, random = ~1|ind, data = d3, method = "REML", weights = varFixed(~pH))
+anova(mod.full, mod.ind) #ind not significant. can drop
+anova(mod.full, mod.accbin) #accbin significant slightly. will keep.
+
+#runs Log Likelihood Ratio test to test effect of random effect in model; if p value is low, that means the random effect significantly improves the model fit and you should keep it.
+```
+DETERMINE FIXED STRUCTURE; start with full model and drop each FE separately to see the significance of each () USE ML METHOD (not default)
+```{r}
+#copy fullest model from above after determining random structure
+mod.full = lme(max.dist ~ pH + cue + pH:cue, random = ~1|accbin, data = d3, method = "ML", weights = varFixed(~pH))
+  summary(mod.full)
+#mod.full <- lme(sqrt(Richness)~NAP*fExposure, method="ML", random=~1|Beach,data=rikz)
+
+#model removing interaction
+mod.inter <- lme(max.dist ~ pH + cue, random = ~1|accbin, data = d3, method = "ML", weights = varFixed(~pH))
+anova(mod.full, mod.inter) #interaction is significant.
+
+#model removing pH fixed effect; not necessary
+#model removing cue fixed effect; not necessary
+#compare the models; not necessary
+
+```
+RUN THE FINAL MODEL; recheck assumptions
+```{r}
+#Now we run the final model; put back in REML
+mod.final <- lme(max.dist ~ pH + cue + pH:cue, random = ~1|accbin, data = d3, method = "REML", weights = varFixed(~pH))
+
+## Validate model assumptions
+plot(mod.final)
+#Check for normality
+qqnorm(resid(mod.final))
+qqline(resid(mod.final))
+## plotting residuals vs. fitted and vs. predictors
+plot(resid(mod.final))
+plot(resid(mod.final)~d1$pH)
+#plot(resid(mod.final)~owls$ArrivalTime)
+
+summary(mod.final) 
+trend1 = emmeans(mod.final, ~cue, var = "pH")
+summary(trend1)
+contrast(trend1, method = 'tukey')
+#Need to run this final model with REML to get values for the final table! Keep fixed effect- value, std. error, df, t-vaule from this output table & keep random effect- intercept, residual for the final table
+
+#testing the significance of the random effect by deleting it and running it with REML test. #test here gets us the values to report; L. Ratio= & p-value= 
+
+#testing the significance of the fixed effect by deleting it and running it with ML test. #test here gets us the values to report; L. Ratio= & p-value= 
+
+
+#What to pull out for summary table and from where?
+# 1) parameter est, std. error, df (summary (mod.final))
+# 2) Random effect intercept (var in B0 across RE leve) and residual value (var w/in RE level) (summary(mod.final)); don't forget that values are in SD and that you need to square them for variance.
+# 3) p value for fixed effects (p value from model comparison summaries (anova(mod.final, mod.X)))
+# 4) LLR for fixed effects(LLR from model comparison summaries (anova(mod.final, mod.X)); if interaction is sig, only report this.)
+
+```
+PLOT MODEL ON DATA
+```{r}
+
+```
+
+
+CODE TO EXTRACT VALUES FROM SUMMARY() OUTPUT TO PUT INTO PRETTY TABLE.
+```{r}
+#Try this code to extract values from summary() output to put into pretty table (code from Elise Elwood):
+c = mod.final %>% 
+  summary() %>% 
+  tidy() %>% 
+  # rename columns
+  rename(Term = term, SE = std.error, t = statistic, P = p.value) %>% 
+  # rename rows
+  mutate(Term = case_when(
+    Term %in% "(Intercept)" ~ "Intercept",
+    Term %in% "stem_diam_mm" ~ "Stem diameter (mm)",
+    Term %in% "longest_leaf_mm" ~ "Longest leaf (mm)"
+  )) %>% 
+  # Round to 3 significant digits
+  mutate_if(is.numeric, signif, 3) %>% 
+  # If P is really small, replace with <
+  mutate(P = ifelse(P < 0.0001, "<0.0001", P))
+c
+write_csv(c, "tables/mod1.csv")
+```
+Repeatability - 6/22/20
+```{r}
+rikz <- read.table("RIKZ.txt", header=T, dec=".")
+#Just for this excercise, lump level 8 into level 10- probably don't want to do this normally
+rikz$fExposure <- rikz$Exposure
+rikz$fExposure[rikz$fExposure==8] <- "10"
+rikz$fExposure <- factor(rikz$fExposure, levels=c(10, 11)) #if you want to alter the levels of your factor, you can't use as.factor ... need to use factor() 
+
+
+mod.1 <- lme(Richness~NAP+fExposure, random=~1|Beach, data=rikz)
+summary(mod.1)
+
+#Repeatability metric; get from the random effects outputs in the summary() table
+1.907175^2/(1.907175^2+3.059089^2) #0.2798939 of the variation that is NOT explained by the fixed effects, IS explained by differences among beaches
+
+#Different way to pull out varainces (& square the standard deviation)
+VarCorr(mod.1)
+vcov <- as.numeric(VarCorr(mod.1))
+vcov[1] #varaince due to beaches
+vcov[2] #varaince due to 
+
+#Another way to calculate repeatability
+rpt <- vcov[1]/(vcov[1]+vcov[2])
+
+
+
+
+```
+Estimating R^2 - 6/23/20
+```{r}
+rikz <- read.table("RIKZ.txt", header=T, dec=".")
+#Just for this excercise, lump level 8 into level 10- probably don't want to do this normally
+rikz$fExposure <- rikz$Exposure
+rikz$fExposure[rikz$fExposure==8] <- "10"
+rikz$fExposure <- factor(rikz$fExposure, levels=c(10, 11)) #if you want to alter the levels of your factor, you can't use as.factor ... need to use factor() 
+
+mod.final <- lme(sqrt(Richness)~NAP+fExposure, random=~1| Beach,data=rikz)
+summary(mod.final)
+
+fixef(mod.final) #gives you parameter estimates for the model (you can also find these within the summary() outupt of your model)
+B0 <- fixef(mod.final)[1] #this is the intercept (B0)
+B1 <- fixef(mod.final)[2] #this is the effect of NAP (B1)
+B2 <- fixef(mod.final)[3] #this is the effect of Exp11 (B2)
+
+fix.matrix <- model.matrix(mod.final, data=rikz)#matrix of our fixed effects; creates a matrix of ACTUAL datapoint values; these are the pieces that we multiply by our estiamtes above --> plug these data values into the model equation to get our predicted y values!!
+head(fix.matrix) 
+
+#Solve your linear equation for each of your data point values --> multiply estimates by their respective data points to get the predicted values
+# B0 = fixef(mod.final)[1]*fix.matrix[,1]  
+# B1 = fixef(mod.final)[2]*fix.matrix[,2]
+# B2 = fixef(mod.final)[3]*fix.matrix[,3]
+fixed <- (fixef(mod.final)[1]*fix.matrix[,1]+fixef(mod.final)[2]*fix.matrix[,2]+fixef(mod.final)[3]*fix.matrix[,3])
+
+#Another way to look at it(exact same as above):
+fixed <- (B0*fix.matrix[,1]+B1*fix.matrix[,2]+B2*fix.matrix[,3]) #these are the predicted values!!! We will be using these to get the variance of the fixed effects, which is why it is called "fixed"
+
+#extimate the variance in our predicted values
+varF <- var(fixed) #variance in our fixed effect values
+varF #numerator for our marginal R^2
+
+#pull out random effects and residuals
+VarCorr(mod.final)
+
+var.est <- as.numeric(VarCorr(mod.final)) #variance estiamtes
+varR <- var.est[1] #random effect variance
+varE <- var.est[2] #resdidual variance
+
+#Marginal R^2 (varaince explained by fixed effects only)
+varF/(varF+varR+varE) #we can explain 56% by our fixed effects! REPORT THIS VALUE
+
+#Conditional R^2 (variance explained by fixed and random effects)
+(varF+varR)/(varF+varR+varE) #we can explain 69% of the variation by our fixed and random effects! REPORT THIS VALUE
+
+
+
+library(MuMIn)
+r.squaredGLMM(mod.final) ##package that computes the marginal & conditional R^2 values as we did manually above!!
+ 
+```
+
