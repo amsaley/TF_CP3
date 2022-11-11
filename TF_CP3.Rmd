@@ -40,6 +40,7 @@ View(tfave)
 data = read_xlsx('/Users/alishamsaley/Documents/GitHub/TF_CP3/FullData.xlsx')
 data$treatment[data$treatment == "carb"] = "crab"
 unique(data$treatment)
+data$pH_round = round(x = data$pH_ave, digits = 2)
 data = data[data$ind != 7 & data$ind != 192 & data$ind != 193 & data$ind != 194 & data$ind != 195 & data$ind != 39 & data$ind != 50 & data$ind != 67 & data$ind != 148 & data$ind != 205 & data$ind != 37 & data$ind != 79 & data$ind != 18 & data$ind != 188 & data$ind != 138 & data$ind != 140 & data$ind != 225 & data$ind != 128 & data$ind != 186 & data$ind != 17,] #ind 186 and 17 are maybes
 View(data)
 ```
@@ -88,7 +89,7 @@ data$treatment[data$treatment == "no cue"] = 0
   data$treatment = as.numeric(data$treatment)
 data$ind = as.factor(data$ind)
 
-d1 = data%>% group_by(ind) %>% dplyr::summarise(trial = mean(Trial_main), arena = mean(bin), accbin = mean(acc_tank), pH = mean(pH_ave), cue = mean(treatment), P_in1 = sum(in_out)/n(), P_in2 = sum(in_out2)/n(), In1 = sum(in_out), In2 = sum(in_out2), Total = length(ind), Out1 = Total - In1, Out2 = Total - In2, P_out1 = 1-P_in1, P_out2 = 1-P_in2, Corner = sum(corner), Not_cor = Total - Corner, Wall = sum(wall), Not_wall = Total - Wall, Bottom = sum(bottom), Not_bot = Total - Bottom, P_cor = sum(corner)/Total, P_wall = sum(wall)/Total, P_bot = sum(Bottom)/Total)
+d1 = data%>% group_by(ind) %>% dplyr::summarise(trial = mean(Trial_main), arena = mean(bin), accbin = mean(acc_tank), pH = mean(pH_round), cue = mean(treatment), P_in1 = sum(in_out)/n(), P_in2 = sum(in_out2)/n(), In1 = sum(in_out), In2 = sum(in_out2), Total = length(ind), Out1 = Total - In1, Out2 = Total - In2, P_out1 = 1-P_in1, P_out2 = 1-P_in2, Corner = sum(corner), Not_cor = Total - Corner, Wall = sum(wall), Not_wall = Total - Wall, Bottom = sum(bottom), Not_bot = Total - Bottom, P_cor = sum(corner)/Total, P_wall = sum(wall)/Total, P_bot = sum(Bottom)/Total)
 
 d1$cue[d1$cue == "0"] = "no cue"
   d1$cue[d1$cue == "1"] = "pisaster"
@@ -119,6 +120,16 @@ with(d1, plot(P_out2 ~ pH, type = "n", xlab = "pH acclimation", ylab = "prop tim
 points(P_out2 ~ pH, data = d1[d1$cue == "no cue",], col = "black", pch = 19)
 points(P_out2 ~ pH, data = d1[d1$cue == "pisaster",], col = "purple", pch = 19)
 points(P_out2 ~ pH, data = d1[d1$cue == "crab",], col = "red", pch = 19)
+
+#aggregating by pH to see ave time spent out of the water (pooled individuals)
+d1agg = aggregate(d1$P_out2, by = list(d1$pH, d1$cue), FUN = mean)
+plot(d1agg$x ~ d1agg$Group.1, col = as.factor(d1agg$Group.2), pch = 19)
+```
+plotting how many individuals leave water
+```{r}
+#for each pH level, calculate the number of individuals that left the water as a proportion to the total exposed to that cue type. 
+d1$P_out3 = ceiling(d1$P_out2)  #ceiling will round up to the nearest integer; giving a vector of 0s and 1s..floor will round down.
+dagg = aggregate(d1$P_out3, by = list(d1$pH, d1$cue), FUN = mean)
 
 ```
 for individuals that never  leave the water: use this to rename the df "d1" but need to remember to change back for other analyses
@@ -179,7 +190,7 @@ lines(plogis(phi)~pH, data = newdat1[newdat1$cue == "no cue",], col = "black", l
 TIME SPENT ON THE WALL
 ```{r}
 par(mfrow = c(1,2))
-with(d2, plot(P_bot ~ pH, type = "n", xlab = "pH acclimation", ylab = "prop time on wall", bty = "n", main = "Prop wall"))
+with(d1, plot(P_bot ~ pH, type = "n", xlab = "pH acclimation", ylab = "prop time on wall", bty = "n", main = "Prop wall"))
 points(P_wall ~ pH, data = d1[d1$cue == "no cue",], col = "black", pch = 19)
 points(P_wall ~ pH, data = d1[d1$cue == "pisaster",], col = "purple", pch = 19)
 points(P_wall ~ pH, data = d1[d1$cue == "crab",], col = "red", pch = 19)
@@ -234,11 +245,16 @@ lines(plogis(phi)~pH, data = newdat1[newdat1$cue == "no cue",], col = "black", l
 TIME SPENT IN THE CORNER
 ```{r}
 par(mfrow = c(2,2))
-with(d2, plot(P_bot ~ pH, type = "n", xlab = "pH acclimation", ylab = "prop time in corner", bty = "n", main = "Prop corner"))
+crack = d1[d1$cue == "crab" & d1$P_out2 < .25,]
+View(crack)
+
+with(d1, plot(P_bot ~ pH, type = "n", xlab = "pH acclimation", ylab = "prop time in corner", bty = "n", main = "Prop corner"))
 
 points(P_cor ~ pH, data = d1[d1$cue == "no cue",], col = "black", pch = 19)
 points(P_cor ~ pH, data = d1[d1$cue == "pisaster",], col = "purple", pch = 19)
 points(P_cor ~ pH, data = d1[d1$cue == "crab",], col = "red", pch = 19)
+points(P_cor ~ pH, data = crack, col = "black", pch = 19)
+
 
 points(P_cor ~ pH, data = d2[d2$cue == "no cue",], col = "black", pch = 19)
 points(P_cor ~ pH, data = d2[d2$cue == "pisaster",], col = "purple", pch = 19)
@@ -246,7 +262,7 @@ points(P_cor ~ pH, data = d2[d2$cue == "crab",], col = "red", pch = 19)
 
 
 ###model for time spent in corner.
-cor = glmer(cbind(Corner, Not_cor) ~ cue * pH + (1|ind) + (1|accbin) + (1|trial), data = d2, family = binomial, control= glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
+cor = glmer(cbind(Corner, Not_cor) ~ pH + (1|ind) + (1|accbin) + (1|trial), data = crack, family = binomial, control= glmerControl(optimizer="bobyqa", optCtrl=list(maxfun=100000)))
 summary(cor)
 #arena and trial were negli so dropped them from the model
 #AIC 
@@ -372,7 +388,7 @@ abline(h = .22, col = "black", lwd = 1.5)
 abline(v = 8.1, col = "green", lwd = 2, lty = 3)
 abline(v = 8, col = "blue", lwd = 2, lty = 5)
 abline(v = 7.7, col = "orange", lwd = 2, lty = 5)
-legend(x = 6.5, y = 1.1, legend = c('pisaster', 'crab', 'no cue'), box.lty = 0, fill = c('purple', 'red', 'black'), bg = "white")
+legend(x = 6.5, y = 1, legend = c('sea star', 'crab', 'no cue'), box.lty = 0, fill = c('purple', 'red', 'black'), bg = "white")
 ```
 ```{r}
 #The function takes in an x vector and a y vector, defining a set of coordinates that, in order, taken in order trace around the area to be shaded. Thus for a set of points 1-10, defined individually as x.1, y.1 to x.10, y.10,
@@ -715,7 +731,7 @@ data$ind = as.factor(data$ind)
 #data = data[data$ind != 7 & data$ind != 192 & data$ind != 193 & data$ind != 194 & data$ind != 195 & data$ind != 39 & data$ind != 50 & data$ind != 67 & data$ind != 148 & data$ind != 205 & data$ind != 37 & data$ind != 79 & data$ind != 18 & data$ind != 188 & data$ind != 138 & data$ind != 140 & data$ind != 225 & data$ind != 128,]
 
   
-data3 = data%>% group_by(ind) %>% dplyr::summarise(pH = mean(pH_ave), accT = mean(acc_tank), Cue = mean(treatment), avX = mean(FX), avY = mean(FY), mdist = max(dist_filt), midist = min(dist_filt), avedis2 = mean(dist_filt), avedis = sqrt((avX^2) + (avY^2)), Group = mean (Trial_main), avdiscent = (sum(sqrt((FX-avX)^2 + (FY-avY)^2)))/(length(ind)), wand = avdiscent/(sqrt(avX^2 + avY^2)))
+data3 = data%>% group_by(ind) %>% dplyr::summarise(pH = mean(pH_ave), accT = mean(acc_tank), Cue = mean(treatment), avX = mean(FX), avY = mean(FY), mdist = max(dist_filt), midist = min(dist_filt), avedis2 = mean(dist_filt), avedis = sqrt((avX^2) + (avY^2)), Group = mean (Trial_main), avdiscent = (sum(sqrt((FX-avX)^2 + (FY-avY)^2)))/(length(ind)), wand = avdiscent/(sqrt(avX^2 + avY^2)), total = sum(dist_filt),P_in1 = sum(in_out)/n(), P_in2 = sum(in_out2)/n(), In1 = sum(in_out), In2 = sum(in_out2), Total = length(ind), Out1 = Total - In1, Out2 = Total - In2, P_out1 = 1-P_in1, P_out2 = 1-P_in2, Corner = sum(corner), Not_cor = Total - Corner, Wall = sum(wall), Not_wall = Total - Wall, Bottom = sum(bottom), Not_bot = Total - Bottom, P_cor = sum(corner)/Total, P_wall = sum(wall)/Total, P_bot = sum(Bottom)/Total)
 data3$cent = pi*(data3$avdiscent)^2
 data3$Cue[data3$Cue == "0"] = "no cue"
   data3$Cue[data3$Cue == "1"] = "pisaster"
@@ -1047,6 +1063,20 @@ predictedcounts6 <- predict(quadratic.model6,list(pH=value, pH2=value^2))
 plot(wand ~ pH, data = d5, pch=16, xlab = "pH", ylab = "wand", cex.lab = 1.3, type = "n", bty = "n", ylim = c(0,2.5))
 lines(value, predictedcounts, col = "darkgreen", lwd = 3)
 lines(value, predictedcounts6, col = "darkgreen", lwd = 3)
+```
+  #total distance? a sum of all of the distance from origin points. 
+```{r}
+outs = data3[data3$P_out2 >0,]
+
+plot(total ~ pH, data = data3, bty = "n", type = "n", main = "total distance from origin", ylab = "total distance (cm)", xlab = "pH treatment")
+points(total ~ pH, data = data3[data3$Cue == "pisaster",], col = "purple", pch = 19)
+points(total ~ pH, data = data3[data3$Cue == "crab",], col = "red", pch = 19)
+points(total ~ pH, data = outs, col = "black", pch = 19)
+points(total ~ pH, data = data3[data3$Cue == "no cue",], col = "grey", pch = 19)
+legend('topleft', legend =c('pisaster', 'crab', 'no cue'), 
+       box.lty = 0,
+       fill = c('purple', 'red', 'black'),  bg= 'white')#adding a figure legend
+
 ```
 HOW DID AN INDIVIDUAL CHANGE POSITION OVER TIME? PLOT ON Y POSITION AS 'SAFETY' VALUE AND X AS TIME, COLORS FOR CUE/PH
 

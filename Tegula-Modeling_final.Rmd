@@ -8,7 +8,6 @@ To do:
 
 Set Up; loading in R packages that you will need + setting working directory
 ```{r}
-library(git2r)
 library(nlme)
 library(lme4)
 library(emmeans)
@@ -21,7 +20,6 @@ library(fitdistrplus) #helps pick distribution of data with descdist() argument
 library(glmmML) #for choosing which model to start with
 getwd()
 setwd("/Users/alishamsaley/Documents/GitHub/TF_CP3/")
-###blah blah lbah test
 ```
 
 Read in the dataset--data exploration
@@ -32,10 +30,8 @@ data = as.data.frame(read_xlsx('/Users/alishamsaley/Documents/GitHub/TF_CP3/Full
 data$treatment[data$treatment == "carb"] = "crab"
 unique(data$treatment)
 data$pH_round = round(x = data$pH_ave, digits = 2)
-
 #taking out innapropriate individuals based on notes.
 data = data[data$ind != 7 & data$ind != 192 & data$ind != 193 & data$ind != 194 & data$ind != 195 & data$ind != 39 & data$ind != 50 & data$ind != 67 & data$ind != 148 & data$ind != 205 & data$ind != 37 & data$ind != 79 & data$ind != 18 & data$ind != 188 & data$ind != 138 & data$ind != 140 & data$ind != 225 & data$ind != 128 & data$ind != 186 & data$ind != 17,] #ind 186 and 17 are maybes
-
 View(data)
 
 #check structure and variable types
@@ -62,8 +58,6 @@ d1$trial = as.factor(d1$trial)
 d1$accbin = as.factor(d1$accbin)
 d1$cue = as.factor(d1$cue)
 str(data)
-
-
 ```
 calculating ave pH by tank; NEED TO ADD IN THE PH VALUES FROM CP2 (03/03)
 ```{r}
@@ -245,7 +239,7 @@ pvar1 = diag(mm1%*%tcrossprod(vcov(mod.final), mm1))
 cmult = 1.96
 newdat1 = data.frame(d1.1, plo = d1.1$out - cmult * sqrt(pvar1), phi = d1.1$out + cmult * sqrt(pvar1))
 
-plot((d1$P_out2) ~ pH, ylim = c(0,1), xlim = c(6.5,8.1), data = d1, bty = "n", type = "n", ylab = "Proportion of time Out", xlab = "pH (Total scale)")
+plot(plogis(out) ~ pH, ylim = c(0,1), xlim = c(6.5,8.0), data = d1.1, bty = "n", type = "n", ylab = "Proportion of time Out", xlab = "pH (Total scale)")
 CrCI = newdat1[newdat1$cue == "crab",]
 PCI = newdat1[newdat1$cue == "pisaster",]
 NoCI = newdat1[newdat1$cue == "no cue",]
@@ -254,19 +248,16 @@ polygon(c(CrCI$pH,rev(CrCI$pH)),c(plogis(CrCI$plo),rev(plogis(CrCI$phi))),col="l
 polygon(c(PCI$pH,rev(PCI$pH)),c(plogis(PCI$plo),rev(plogis(PCI$phi))),col="thistle", border = NA)
 polygon(c(NoCI$pH,rev(NoCI$pH)),c(plogis(NoCI$plo),rev(plogis(NoCI$phi))),col="grey85", border = NA)
 
-lines(plogis(out) ~ pH, data = d1.1[d1.1$cue == 'pisaster',], col = "orchid4", pch = 16, lwd = 1.5)
-lines(plogis(out) ~ pH, data = d1.1[d1.1$cue == 'crab',], col = "red", pch = 16, lwd = 1.5)
-lines(plogis(out) ~ pH, data = d1.1[d1.1$cue == 'no cue',], col = "black", pch = 16, lwd = 1.5)
+points(plogis(out) ~ pH, data = d1.1[d1.1$cue == 'pisaster',], col = "orchid4", pch = 16)
+points(plogis(out) ~ pH, data = d1.1[d1.1$cue == 'crab',], col = "red", pch = 16)
+points(plogis(out) ~ pH, data = d1.1[d1.1$cue == 'no cue',], col = "black", pch = 16)
 
-lines(plogis(plo)~pH, data = newdat1[newdat1$cue == "crab",], col = "red", lty = 4, lwd = 1.5)
-lines(plogis(phi)~pH, data = newdat1[newdat1$cue == "crab",], col = "red", lty = 4, lwd = 1.5)
-lines(plogis(plo)~pH, data = newdat1[newdat1$cue == "pisaster",], col = "orchid4", lty = 4, lwd = 1.5)
-lines(plogis(phi)~pH, data = newdat1[newdat1$cue == "pisaster",], col = "orchid4", lty = 4, lwd = 1.5)
-lines(plogis(plo)~pH, data = newdat1[newdat1$cue == "no cue",], col = "black", lty = 4, lwd = 1.5)
-lines(plogis(phi)~pH, data = newdat1[newdat1$cue == "no cue",], col = "black", lty = 4, lwd = 1.5)
-points(P_out2 ~ pH, ylim = c(0,1), xlim = c(6.5,8.1), data = d1[d1$cue == "pisaster",], ylab = "Proportion of time Out", xlab = "pH (Total scale)", pch = 20, cex =1, col = "purple")
-    points(P_out2 ~ pH, ylim = c(0,1), xlim = c(6.5,8.1), data = d1[d1$cue == "crab",], ylab = "Proportion of time Out", xlab = "pH (Total scale)", pch = 20, cex = 1, col = "red")
-    points(P_out2 ~ pH, ylim = c(0,1), xlim = c(6.5,8.1), data = d1[d1$cue == "no cue",], ylab = "Proportion of time Out", xlab = "pH (Total scale)", pch = 20, cex =1, col = "black")
+lines(plogis(plo)~pH, data = newdat1[newdat1$cue == "crab",], col = "red", lty = 4, lwd = 2)
+lines(plogis(phi)~pH, data = newdat1[newdat1$cue == "crab",], col = "red", lty = 4, lwd = 2)
+lines(plogis(plo)~pH, data = newdat1[newdat1$cue == "pisaster",], col = "orchid4", lty = 4, lwd = 2)
+lines(plogis(phi)~pH, data = newdat1[newdat1$cue == "pisaster",], col = "orchid4", lty = 4, lwd = 2)
+lines(plogis(plo)~pH, data = newdat1[newdat1$cue == "no cue",], col = "black", lty = 4, lwd = 2)
+lines(plogis(phi)~pH, data = newdat1[newdat1$cue == "no cue",], col = "black", lty = 4, lwd = 2)
 ```
 
 ###############################
@@ -278,32 +269,8 @@ COORDINATE TRACKING
 ###############################
 Read in the dataset--data exploration
 ```{r}
-#tfave <- read_xlsx('/Users/alishamsaley/Documents/GitHub/TF_CP3/pH averages.xlsx')
-data = as.data.frame(read_xlsx('/Users/alishamsaley/Documents/GitHub/TF_CP3/FullData_corrected.xlsx'))
-data$treatment[data$treatment == "carb"] = "crab"
-unique(data$treatment)
-data$pH_round = round(x = data$pH_ave, digits = 2)
-
-#taking out innapropriate individuals based on notes.
-data = data[data$ind != 7 & data$ind != 192 & data$ind != 193 & data$ind != 194 & data$ind != 195 & data$ind != 39 & data$ind != 50 & data$ind != 67 & data$ind != 148 & data$ind != 205 & data$ind != 37 & data$ind != 79 & data$ind != 18 & data$ind != 188 & data$ind != 138 & data$ind != 140 & data$ind != 225 & data$ind != 128 & data$ind != 186 & data$ind != 17,] #ind 186 and 17 are maybes
-
-View(data)
-
-#check structure and variable types
-str(data) #structure of the dataset
-head(data) #shows the first few lines of the dataframe
-tail(data) #shows the tail end of the datafram
-
-#creating new dataframe by just individual for location summaries: called d1
-#rename c and nc to numbers for new dataframe...because we are using mean function
-data$treatment[data$treatment == "no cue"] = 0
-  data$treatment[data$treatment == "pisaster" ] = 1 
-  data$treatment[data$treatment == "crab"] = 2
-  data$treatment = as.numeric(data$treatment)
-data$ind = as.factor(data$ind)
-
 d3 = data%>% group_by(ind) %>% dplyr::summarise(accbin = mean(acclim), pH = mean(pH_round), cue = mean(treatment), avX = mean(FX), avY = mean(FY), max.dist = max(dist_filt), min.dist = min(dist_filt), mean.dis = mean(dist_filt), ave.dis = sqrt((avX^2) + (avY^2)), trial = mean (Trial_main), ave.dis.cent = (sum(sqrt((FX-avX)^2 + (FY-avY)^2)))/(length(ind)), wand = ave.dis.cent/(sqrt(avX^2 + avY^2)))
-d3$cent = pi*(d3$ave.dis.cent)^2
+d3$cent = pi*(data3$ave.dis.cent)^2
 d3$cue[d3$cue == "0"] = "no cue"
   d3$cue[d3$cue == "1"] = "pisaster"
   d3$cue[d3$cue == "2"] = "crab"
@@ -559,8 +526,3 @@ r.squaredGLMM(mod.final) ##package that computes the marginal & conditional R^2 
  
 ```
 
-for presentation for qw
-```{r}
-plot(pH ~ accbin, data = d1, pch = 19,cex.lab = 1, col = 'black', xlab = "acclimation bin", ylab = "pH Total scale")
-points(pH ~ accbin, data = d1, pch = 19,cex = 1.5, col = 'black')
-```
